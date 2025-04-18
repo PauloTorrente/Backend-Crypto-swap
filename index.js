@@ -1,6 +1,6 @@
 const express = require('express');
 const app = express();
-const db = require('./config/database');
+const db = require('./config/database'); // Certifique-se que isso exporta uma instância do Sequelize
 const router = require('./api/router'); 
 const PORT = process.env.PORT || 3000;
 
@@ -9,14 +9,29 @@ app.use('/api', router);
 
 app.get('/', async (req, res) => {
   try {
-    const result = await db.query('SELECT NOW()');
-    res.json({ success: true, time: result.rows[0] });
+    // Sequelize retorna [resultados, metadata] em consultas brutas
+    const [results] = await db.query('SELECT NOW()');
+    
+    // Verifica se há resultados e pega o primeiro registro
+    if (!results || results.length === 0) {
+      throw new Error('Nenhum resultado retornado');
+    }
+
+    // Acessa a propriedade 'now' (nome da coluna retornada pelo PostgreSQL)
+    res.json({ 
+      success: true, 
+      time: results[0].now 
+    });
+
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false });
+    console.error('Erro na rota /:', err);
+    res.status(500).json({ 
+      success: false, 
+      error: err.message 
+    });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
 });
