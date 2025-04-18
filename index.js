@@ -1,8 +1,12 @@
+const cors = require('cors');
 const express = require('express');
 const app = express();
 const db = require('./config/database'); // Certifique-se que isso exporta uma instância do Sequelize
 const router = require('./api/router'); 
 const PORT = process.env.PORT || 3000;
+
+// ✅ Libera requisições de qualquer origem (útil para desenvolvimento local)
+app.use(cors());
 
 app.use(express.json()); 
 app.use('/api', router); 
