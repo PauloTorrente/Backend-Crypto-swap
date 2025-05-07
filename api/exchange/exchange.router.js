@@ -1,15 +1,15 @@
 const express = require('express');
-const router = express.Router();
 const controller = require('./exchange.controller');
-const { verifyToken, checkAdmin } = require('../../middlewares/auth.middleware');
+const router = express.Router();
 
-// Public routes
-router.get('/', controller.getAllRates); // Public route to fetch all exchange rates
-router.get('/:currencyCode', controller.getRate); // Public route to fetch rate by currency code
+// Rotas CRUD
+router.get('/', controller.getAllRates);              // GET /api/rates
+router.get('/:currencyCode', controller.getRate);    // GET /api/rates/BRL
+router.put('/:currencyCode', controller.updateRate); // PUT /api/rates/BRL
+router.post('/', controller.addCurrency);            // POST /api/rates
+router.delete('/:currencyCode', controller.removeCurrency); // DELETE /api/rates/BRL
 
-// Admin-protected routes
-router.put('/:currencyCode', verifyToken, checkAdmin, controller.updateRate); // Admin route to update rate
-router.post('/', verifyToken, checkAdmin, controller.createCurrency); // Admin route to create new currency
-router.delete('/:currencyCode', verifyToken, checkAdmin, controller.deleteCurrency); // Admin route to delete a currency
+// Rota de Conversão
+router.post('/convert', controller.convert);         // POST /api/rates/convert
 
 module.exports = router;

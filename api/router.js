@@ -6,9 +6,9 @@ const exchangeRouter = require('./exchange/exchange.router');
 const authRouter = require('./auth/auth.router');
 const usersRouter = require('./users/users.router');
 
-// Use routes
-router.use('/exchange', exchangeRouter);  // Exchange rate routes
-router.use('/auth', authRouter);          // Authentication routes
-router.use('/users', usersRouter);        // User routes
+// Use routes with proper prefixes
+router.use('/rates', exchangeRouter);  
+router.use('/auth', authRouter);       
+router.use('/users', usersRouter);     
 
 module.exports = router;

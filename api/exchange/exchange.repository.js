@@ -1,93 +1,78 @@
-const { ExchangeRate } = require('../models');
-
-const getAllRates = async () => {
-  try {
-    return await ExchangeRate.findAll({
-      order: [['currency_code', 'ASC']],
-    });
-  } catch (error) {
-    throw new Error('Failed to fetch exchange rates');
+class ExchangeRepository {
+  constructor(ExchangeRateModel) {
+    this.ExchangeRate = ExchangeRateModel;
   }
-};
 
-const getRateByCurrency = async (currencyCode) => {
-  try {
-    return await ExchangeRate.findOne({
-      where: { currency_code: currencyCode.toUpperCase() },
-    });
-  } catch (error) {
-    throw new Error(`Failed to fetch rate for ${currencyCode}`);
+  // Busca todas as taxas de câmbio
+  async getAllRates() {
+    try {
+      return await this.ExchangeRate.findAll({
+        order: [['currency_code', 'ASC']],
+      });
+    } catch (error) {
+      throw new Error(`Falha ao buscar taxas: ${error.message}`);
+    }
   }
-};
 
-const updateRate = async (currencyCode, { buy_rate, sell_rate }) => {
-  try {
-    const [updatedRows] = await ExchangeRate.update(
-      {
-        buy_rate,
-        sell_rate,
-        last_updated: new Date(),
-      },
-      {
+  // Busca taxa por código de moeda (ex: 'BRL')
+  async getRateByCurrency(currencyCode) {
+    try {
+      return await this.ExchangeRate.findOne({
         where: { currency_code: currencyCode.toUpperCase() },
-        returning: true,
-        individualHooks: true,
+      });
+    } catch (error) {
+      throw new Error(`Falha ao buscar moeda ${currencyCode}: ${error.message}`);
+    }
+  }
+
+  // Atualiza taxa de câmbio
+  async updateRate(currencyCode, rateData) {
+    try {
+      const [affectedRows] = await this.ExchangeRate.update(rateData, {
+        where: { currency_code: currencyCode.toUpperCase() },
+      });
+
+      if (affectedRows === 0) {
+        throw new Error('Moeda não encontrada para atualização');
       }
-    );
 
-    if (updatedRows === 0) {
-      throw new Error('Currency not found');
+      return this.getRateByCurrency(currencyCode);
+    } catch (error) {
+      throw new Error(`Falha ao atualizar ${currencyCode}: ${error.message}`);
     }
-
-    return await getRateByCurrency(currencyCode);
-  } catch (error) {
-    throw error;
   }
-};
 
-const createCurrency = async (currencyData) => {
-  try {
-    const existing = await getRateByCurrency(currencyData.currency_code);
-    if (existing) {
-      throw new Error('Currency already exists');
+  // Cria nova moeda
+  async createCurrency(currencyData) {
+    try {
+      return await this.ExchangeRate.create(currencyData);
+    } catch (error) {
+      if (error.name === 'SequelizeUniqueConstraintError') {
+        throw new Error(`Moeda ${currencyData.currency_code} já existe`);
+      }
+      throw new Error(`Falha ao criar moeda: ${error.message}`);
     }
-
-    return await ExchangeRate.create({
-      currency_code: currencyData.currency_code.toUpperCase(),
-      currency_name: currencyData.currency_name,
-      rate_type: currencyData.rate_type || 'fiat',
-      base_rate: currencyData.base_rate || null,
-      buy_rate: currencyData.buy_rate,
-      sell_rate: currencyData.sell_rate,
-      adjustment_formula: currencyData.adjustment_formula || null,
-      is_crypto: currencyData.is_crypto || false,
-      last_updated: new Date(),
-    });
-  } catch (error) {
-    throw error;
   }
-};
 
-const deleteCurrency = async (currencyCode) => {
-  try {
-    const deletedRows = await ExchangeRate.destroy({
-      where: { currency_code: currencyCode.toUpperCase() },
-    });
-
-    if (deletedRows === 0) {
-      throw new Error('Currency not found');
+  // Remove moeda
+  async deleteCurrency(currencyCode) {
+    try {
+      return await this.ExchangeRate.destroy({
+        where: { currency_code: currencyCode.toUpperCase() },
+      });
+    } catch (error) {
+      throw new Error(`Falha ao deletar ${currencyCode}: ${error.message}`);
     }
-
-    return { message: 'Currency deleted successfully' };
-  } catch (error) {
-    throw error;
   }
-};
 
-module.exports = {
-  getAllRates,
-  getRateByCurrency,
-  updateRate,
-  createCurrency,
-  deleteCurrency,
-};
+  // Busca moeda base (USDT)
+  async getBaseCurrency() {
+    try {
+      return await this.ExchangeRate.findOne({ where: { rate_type: 'base' } });
+    } catch (error) {
+      throw new Error(`Falha ao buscar moeda base: ${error.message}`);
+    }
+  }
+}
+
+module.exports = ExchangeRepository;

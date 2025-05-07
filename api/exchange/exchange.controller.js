@@ -1,110 +1,228 @@
 const service = require('./exchange.service');
 
-const getAllRates = async (req, res) => {
-  try {
-    console.log('📥 Processando requisição para consultar taxas de câmbio...');
-    const rates = await service.getAllRates();
-    console.log('📤 Taxas recuperadas com sucesso.');
-    res.json(rates);
-  } catch (error) {
-    console.error('⚠️ Erro ao consultar taxas de câmbio.');
-    res.status(500).json({ 
-      message: 'Erro ao consultar taxas de câmbio.',
-      error: error.message 
-    });
-  }
-};
+class ExchangeController {
+  // List all exchange rates
+  async getAllRates(req, res) {
+    try {
+      console.log('📊 Buscando todas as taxas de câmbio...');
+      const rates = await service.getAllRates();
+      
+      // Format all numeric values in the rates array
+      const formattedRates = rates.map(rate => ({
+        ...rate,
+        buy_rate: parseFloat(rate.buy_rate).toFixed(2),
+        sell_rate: parseFloat(rate.sell_rate).toFixed(2),
+        bank_fee: parseFloat(rate.bank_fee).toFixed(4),
+        platform_fee: parseFloat(rate.platform_fee).toFixed(4),
+        spread: parseFloat(rate.spread).toFixed(2),
+        mid_rate: parseFloat(rate.mid_rate).toFixed(2)
+      }));
 
-const getRate = async (req, res) => {
-  try {
-    console.log('📥 Processando consulta de taxa de câmbio específica...');
-    const rate = await service.getRate(req.params.currencyCode);
-    if (rate) {
-      console.log('📤 Taxa específica retornada com sucesso.');
-      res.json(rate);
-    } else {
-      console.log('⚠️ Moeda não encontrada.');
-      res.status(404).json({ 
-        message: 'Moeda não encontrada' 
+      res.json({
+        success: true,
+        data: formattedRates
+      });
+    } catch (error) {
+      console.error('❌ Erro ao buscar taxas:', error.message);
+      res.status(500).json({ 
+        success: false,
+        message: 'Falha ao carregar taxas de câmbio',
+        error: error.message,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
       });
     }
-  } catch (error) {
-    console.error('⚠️ Erro ao consultar taxa específica.');
-    res.status(500).json({ 
-      message: 'Erro ao consultar taxa de câmbio.',
-      error: error.message 
-    });
   }
-};
 
-const updateRate = async (req, res) => {
-  try {
-    console.log('📥 Processando atualização de taxa...');
-    const updated = await service.updateRate(
-      req.params.currencyCode, 
-      req.body
-    );
-    if (updated) {
-      console.log('📤 Taxa atualizada com sucesso.');
-      res.json(updated);
-    } else {
-      console.log('⚠️ Moeda não encontrada para atualização.');
-      res.status(404).json({ 
-        message: 'Moeda não encontrada' 
+  // Get specific exchange rate by currency code
+  async getRate(req, res) {
+    try {
+      const { currencyCode } = req.params;
+      console.log(`🔎 Buscando taxa para moeda ${currencyCode}...`);
+      
+      const rate = await service.getRate(currencyCode.toUpperCase());
+      if (!rate) {
+        return res.status(404).json({ 
+          success: false,
+          message: `Moeda ${currencyCode} não encontrada` 
+        });
+      }
+
+      // Ensure all numeric values are properly formatted
+      const formattedRate = {
+        ...rate,
+        buy_rate: parseFloat(rate.buy_rate).toFixed(2),
+        sell_rate: parseFloat(rate.sell_rate).toFixed(2),
+        bank_fee: parseFloat(rate.bank_fee).toFixed(4),
+        platform_fee: parseFloat(rate.platform_fee).toFixed(4),
+        spread: parseFloat(rate.spread).toFixed(2),
+        mid_rate: parseFloat(rate.mid_rate).toFixed(2)
+      };
+
+      res.json({ 
+        success: true,
+        data: formattedRate 
+      });
+    } catch (error) {
+      console.error(`❌ Erro ao buscar ${req.params.currencyCode}:`, error.message);
+      res.status(500).json({ 
+        success: false,
+        message: 'Falha ao buscar taxa',
+        error: error.message,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
       });
     }
-  } catch (error) {
-    console.error('⚠️ Erro ao atualizar taxa.');
-    res.status(400).json({ 
-      message: 'Erro ao atualizar taxa.',
-      error: error.message 
-    });
   }
-};
 
-const createCurrency = async (req, res) => {
-  try {
-    console.log('📥 Processando criação de nova moeda...');
-    const newCurrency = await service.addCurrency(req.body);
-    console.log('📤 Moeda criada com sucesso.');
-    res.status(201).json(newCurrency);
-  } catch (error) {
-    console.error('⚠️ Erro ao criar moeda.');
-    const status = error.message.includes('already exists') ? 409 : 400;
-    res.status(status).json({ 
-      message: 'Erro ao criar moeda.',
-      error: error.message 
-    });
-  }
-};
+  // Convert between currencies
+  async convert(req, res) {
+    try {
+      const { from, to, amount } = req.body;
+      console.log(`🔄 Convertendo ${amount} ${from} para ${to}...`);
 
-const deleteCurrency = async (req, res) => {
-  try {
-    console.log('📥 Processando exclusão de moeda...');
-    const result = await service.removeCurrency(req.params.currencyCode);
-    if (result) {
-      console.log('📤 Moeda removida com sucesso.');
-      res.json(result);
-    } else {
-      console.log('⚠️ Moeda não encontrada para exclusão.');
-      res.status(404).json({ 
-        message: 'Erro ao excluir moeda.',
-        error: 'Moeda não encontrada'
+      if (!from || !to || !amount) {
+        return res.status(400).json({ 
+          success: false,
+          message: 'Parâmetros from, to e amount são obrigatórios' 
+        });
+      }
+
+      if (from === to) {
+        return res.status(400).json({ 
+          success: false,
+          message: 'Moedas de origem e destino devem ser diferentes' 
+        });
+      }
+
+      const result = await service.convertCurrency(
+        from.toUpperCase(), 
+        to.toUpperCase(), 
+        parseFloat(amount)
+      );
+      
+      // Format all numeric values in the response
+      const formattedResult = {
+        ...result,
+        finalAmount: parseFloat(result.finalAmount).toFixed(2),
+        steps: {
+          ...result.steps,
+          bankFee: parseFloat(result.steps.bankFee).toFixed(2),
+          netAfterBank: parseFloat(result.steps.netAfterBank).toFixed(2),
+          usdtAcquired: parseFloat(result.steps.usdtAcquired).toFixed(2),
+          platformFee: parseFloat(result.steps.platformFee).toFixed(2),
+          netUsdt: parseFloat(result.steps.netUsdt).toFixed(2),
+          spread: parseFloat(result.steps.spread).toFixed(2),
+          finalUsdt: parseFloat(result.steps.finalUsdt).toFixed(2),
+          exchangeRateUsed: {
+            from: parseFloat(result.steps.exchangeRateUsed.from).toFixed(2),
+            to: parseFloat(result.steps.exchangeRateUsed.to).toFixed(2),
+            usdt: parseFloat(result.steps.exchangeRateUsed.usdt).toFixed(4)
+          }
+        }
+      };
+
+      res.json({ 
+        success: true, 
+        ...formattedResult 
+      });
+    } catch (error) {
+      console.error('❌ Erro na conversão:', error.message);
+      res.status(400).json({ 
+        success: false,
+        message: 'Falha na conversão',
+        error: error.message,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
       });
     }
-  } catch (error) {
-    console.error('⚠️ Erro ao excluir moeda.');
-    res.status(404).json({ 
-      message: 'Erro ao excluir moeda.',
-      error: error.message 
-    });
   }
-};
 
-module.exports = {
-  getAllRates,
-  getRate,
-  updateRate,
-  createCurrency,
-  deleteCurrency
-};
+  // Update exchange rate
+  async updateRate(req, res) {
+    try {
+      const { currencyCode } = req.params;
+      console.log(`🔄 Atualizando taxa para ${currencyCode}...`);
+
+      const updated = await service.updateRate(
+        currencyCode.toUpperCase(), 
+        req.body
+      );
+      
+      // Format the updated rate response
+      const formattedRate = {
+        ...updated,
+        buy_rate: parseFloat(updated.buy_rate).toFixed(2),
+        sell_rate: parseFloat(updated.sell_rate).toFixed(2),
+        spread: parseFloat(updated.spread).toFixed(2),
+        mid_rate: parseFloat(updated.mid_rate).toFixed(2)
+      };
+
+      res.json({ 
+        success: true, 
+        data: formattedRate 
+      });
+    } catch (error) {
+      console.error(`❌ Erro ao atualizar ${req.params.currencyCode}:`, error.message);
+      res.status(400).json({ 
+        success: false,
+        message: 'Falha ao atualizar taxa',
+        error: error.message,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
+    }
+  }
+
+  // Add new currency
+  async addCurrency(req, res) {
+    try {
+      console.log('➕ Adicionando nova moeda...');
+      const newCurrency = await service.addCurrency(req.body);
+      
+      // Format the new currency response
+      const formattedCurrency = {
+        ...newCurrency,
+        buy_rate: parseFloat(newCurrency.buy_rate).toFixed(2),
+        sell_rate: parseFloat(newCurrency.sell_rate).toFixed(2),
+        spread: parseFloat(newCurrency.spread).toFixed(2),
+        mid_rate: parseFloat(newCurrency.mid_rate).toFixed(2)
+      };
+      
+      res.status(201).json({ 
+        success: true, 
+        data: formattedCurrency 
+      });
+    } catch (error) {
+      console.error('❌ Erro ao adicionar moeda:', error.message);
+      const status = error.message.includes('já existe') ? 409 : 400;
+      res.status(status).json({ 
+        success: false,
+        message: 'Falha ao criar moeda',
+        error: error.message,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
+    }
+  }
+
+  // Remove currency
+  async removeCurrency(req, res) {
+    try {
+      const { currencyCode } = req.params;
+      console.log(`🗑️ Removendo moeda ${currencyCode}...`);
+
+      const result = await service.removeCurrency(currencyCode.toUpperCase());
+      
+      res.json({ 
+        success: true, 
+        ...result 
+      });
+    } catch (error) {
+      console.error(`❌ Erro ao remover ${req.params.currencyCode}:`, error.message);
+      res.status(400).json({ 
+        success: false,
+        message: 'Falha ao remover moeda',
+        error: error.message,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
+    }
+  }
+}
+
+module.exports = new ExchangeController();
