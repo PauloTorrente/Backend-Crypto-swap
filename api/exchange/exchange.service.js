@@ -58,7 +58,6 @@ class ExchangeService {
   }
 
   async convertCurrency(fromCurrency, toCurrency, amount, customParams = {}) {
-    // Validate currency pair
     if (!this.isSupportedPair(fromCurrency, toCurrency)) {
       throw new Error(`Currency pair ${fromCurrency}-${toCurrency} not supported`);
     }
@@ -77,7 +76,15 @@ class ExchangeService {
       throw new Error('Amount must be greater than zero');
     }
 
-    // Apply custom rates or use defaults
+    // VALIDAÇÃO EXPLÍCITA DAS TAXAS
+    if (parseFloat(rateFrom.buy_rate) <= parseFloat(rateFrom.sell_rate)) {
+      throw new Error(`BUY RATE (${rateFrom.buy_rate}) DEVE SER MAIOR QUE SELL RATE (${rateFrom.sell_rate}) PARA ${fromCurrency}`);
+    }
+
+    if (parseFloat(rateTo.buy_rate) <= parseFloat(rateTo.sell_rate)) {
+      throw new Error(`BUY RATE (${rateTo.buy_rate}) DEVE SER MAIOR QUE SELL RATE (${rateTo.sell_rate}) PARA ${toCurrency}`);
+    }
+
     const rates = {
       bankFee: customParams.bankFeeRate ?? rateFrom.bank_fee,
       platformFee: customParams.platformFeeRate ?? rateUSDT.platform_fee,
@@ -86,14 +93,12 @@ class ExchangeService {
       targetRate: customParams.targetExchangeRate ?? rateTo.sell_rate
     };
 
-    // Conversion steps
     const bankFee = amount * rates.bankFee;
     const netAfterBank = amount - bankFee;
 
     let usdtAcquired, platformFee, netUsdt, spreadAmount, finalUsdt, finalAmount;
 
     if (fromCurrency === 'BRL' && toCurrency === 'BOB') {
-      // BRL → USDT → BOB
       usdtAcquired = netAfterBank / rates.exchangeRate;
       platformFee = usdtAcquired * rates.platformFee;
       netUsdt = usdtAcquired - platformFee;
@@ -101,7 +106,6 @@ class ExchangeService {
       finalUsdt = netUsdt - spreadAmount;
       finalAmount = finalUsdt / rates.targetRate;
     } else {
-      // BOB → USDT → BRL
       usdtAcquired = netAfterBank * rates.exchangeRate;
       platformFee = usdtAcquired * rates.platformFee;
       netUsdt = usdtAcquired - platformFee;
@@ -139,11 +143,17 @@ class ExchangeService {
     try {
       const { buy_rate, sell_rate } = rateData;
 
-      if (sell_rate <= buy_rate) throw new Error('Sell rate must be higher than buy rate');
-      if (buy_rate <= 0 || sell_rate <= 0) throw new Error('Rates must be positive values');
+      // VALIDAÇÃO FORTIFICADA
+      if (parseFloat(buy_rate) <= parseFloat(sell_rate)) {
+        throw new Error(`BUY RATE (${buy_rate}) DEVE SER MAIOR QUE SELL RATE (${sell_rate})!`);
+      }
+
+      if (buy_rate <= 0 || sell_rate <= 0) {
+        throw new Error('Taxas devem ser valores positivos');
+      }
 
       const spread = ((sell_rate - buy_rate) / buy_rate * 100);
-      if (spread > 10) throw new Error('Spread exceeds maximum allowed (10%)');
+      if (spread > 10) throw new Error('Spread máximo permitido é 10%');
 
       const updated = await this.repo.updateRate(currencyCode, {
         buy_rate: parseFloat(buy_rate),
@@ -175,8 +185,13 @@ class ExchangeService {
         adjustment_formula = null,
       } = currencyData;
 
-      if (!currency_code || !currency_name) throw new Error('Missing required currency fields');
-      if (!/^[A-Z]{3}$/.test(currency_code)) throw new Error('Currency code must be 3 uppercase letters');
+      // VALIDAÇÃO EXPLÍCITA
+      if (parseFloat(buy_rate) <= parseFloat(sell_rate)) {
+        throw new Error(`BUY RATE (${buy_rate}) PRECISA SER MAIOR QUE SELL RATE (${sell_rate})`);
+      }
+
+      if (!currency_code || !currency_name) throw new Error('Campos obrigatórios faltando');
+      if (!/^[A-Z]{3}$/.test(currency_code)) throw new Error('Código da moeda deve ter 3 letras maiúsculas');
 
       const spread = ((sell_rate - buy_rate) / buy_rate * 100).toFixed(2);
 
