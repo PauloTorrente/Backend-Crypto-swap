@@ -6,6 +6,10 @@ class ExchangeService {
   constructor() {
     this.repo = new ExchangeRepository(ExchangeRate);
     this.USDT_CODE = 'USDT';
+    this.SUPPORTED_PAIRS = [
+      { from: 'BRL', to: 'BOB' },
+      { from: 'BOB', to: 'BRL' }
+    ];
   }
 
   async getAllRates() {
@@ -53,7 +57,12 @@ class ExchangeService {
     }
   }
 
-  async convertCurrency(fromCurrency, toCurrency, amount) {
+  async convertCurrency(fromCurrency, toCurrency, amount, customParams = {}) {
+    // Validate currency pair
+    if (!this.isSupportedPair(fromCurrency, toCurrency)) {
+      throw new Error(`Currency pair ${fromCurrency}-${toCurrency} not supported`);
+    }
+
     const [rateFrom, rateTo, rateUSDT] = await Promise.all([
       this.repo.getRateByCurrency(fromCurrency),
       this.repo.getRateByCurrency(toCurrency),
@@ -61,38 +70,44 @@ class ExchangeService {
     ]);
 
     if (!rateFrom || !rateTo || !rateUSDT) {
-      throw new Error('Moeda(s) não encontrada(s) no banco de dados');
+      throw new Error('Currency not found in database');
     }
 
     if (amount <= 0) {
-      throw new Error('O valor deve ser maior que zero');
+      throw new Error('Amount must be greater than zero');
     }
 
-    const bankFee = amount * rateFrom.bank_fee;
+    // Apply custom rates or use defaults
+    const rates = {
+      bankFee: customParams.bankFeeRate ?? rateFrom.bank_fee,
+      platformFee: customParams.platformFeeRate ?? rateUSDT.platform_fee,
+      spread: customParams.spreadRate ?? rateTo.spread,
+      exchangeRate: customParams.exchangeRate ?? rateFrom.buy_rate,
+      targetRate: customParams.targetExchangeRate ?? rateTo.sell_rate
+    };
+
+    // Conversion steps
+    const bankFee = amount * rates.bankFee;
     const netAfterBank = amount - bankFee;
 
     let usdtAcquired, platformFee, netUsdt, spreadAmount, finalUsdt, finalAmount;
 
     if (fromCurrency === 'BRL' && toCurrency === 'BOB') {
       // BRL → USDT → BOB
-      usdtAcquired = netAfterBank / rateFrom.buy_rate; // BRL to USDT
-      platformFee = usdtAcquired * rateUSDT.platform_fee;
+      usdtAcquired = netAfterBank / rates.exchangeRate;
+      platformFee = usdtAcquired * rates.platformFee;
       netUsdt = usdtAcquired - platformFee;
-      spreadAmount = netUsdt * rateTo.spread;
+      spreadAmount = netUsdt * rates.spread;
       finalUsdt = netUsdt - spreadAmount;
-      finalAmount = finalUsdt / rateTo.buy_rate; // USDT to BOB
-    } 
-    else if (fromCurrency === 'BOB' && toCurrency === 'BRL') {
+      finalAmount = finalUsdt / rates.targetRate;
+    } else {
       // BOB → USDT → BRL
-      usdtAcquired = netAfterBank * rateFrom.buy_rate; // BOB to USDT
-      platformFee = usdtAcquired * rateUSDT.platform_fee;
+      usdtAcquired = netAfterBank * rates.exchangeRate;
+      platformFee = usdtAcquired * rates.platformFee;
       netUsdt = usdtAcquired - platformFee;
-      spreadAmount = netUsdt * rateTo.spread;
+      spreadAmount = netUsdt * rates.spread;
       finalUsdt = netUsdt - spreadAmount;
-      finalAmount = finalUsdt * rateTo.buy_rate; // USDT to BRL
-    }
-    else {
-      throw new Error('Par de moedas não suportado');
+      finalAmount = finalUsdt * rateTo.sell_rate;
     }
 
     return {
@@ -109,10 +124,13 @@ class ExchangeService {
         spread: parseFloat(spreadAmount.toFixed(2)),
         finalUsdt: parseFloat(finalUsdt.toFixed(2)),
         exchangeRateUsed: {
-          from: parseFloat(rateFrom.buy_rate),
-          to: parseFloat(rateTo.buy_rate),
-          usdt: parseFloat(rateUSDT.platform_fee)
-        }
+          from: parseFloat(rates.exchangeRate),
+          to: parseFloat(rates.targetRate),
+          usdt: parseFloat(rates.platformFee),
+          bankFeeRate: parseFloat(rates.bankFee),
+          spreadRate: parseFloat(rates.spread)
+        },
+        isCustom: Object.keys(customParams).length > 0
       }
     };
   }
@@ -205,6 +223,12 @@ class ExchangeService {
 
   async getBaseCurrency() {
     return this.repo.getBaseCurrency();
+  }
+
+  isSupportedPair(fromCurrency, toCurrency) {
+    return this.SUPPORTED_PAIRS.some(
+      pair => pair.from === fromCurrency && pair.to === toCurrency
+    );
   }
 }
 
