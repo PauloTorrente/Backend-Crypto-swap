@@ -104,9 +104,9 @@ class ExchangeService {
       netUsdt = usdtAcquired - platformFee;
       spreadAmount = netUsdt * rates.spread;
       finalUsdt = netUsdt - spreadAmount;
-      finalAmount = finalUsdt / rates.targetRate;
+      finalAmount = finalUsdt * rates.targetRate;
     } else {
-      usdtAcquired = netAfterBank * rates.exchangeRate;
+      usdtAcquired = netAfterBank / rates.exchangeRate;
       platformFee = usdtAcquired * rates.platformFee;
       netUsdt = usdtAcquired - platformFee;
       spreadAmount = netUsdt * rates.spread;
