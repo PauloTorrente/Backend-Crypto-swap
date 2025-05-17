@@ -141,32 +141,47 @@ class ExchangeService {
 
   async updateRate(currencyCode, rateData) {
     try {
-      const { buy_rate, sell_rate } = rateData;
-
-      // VALIDAÇÃO FORTIFICADA
-      if (parseFloat(buy_rate) <= parseFloat(sell_rate)) {
-        throw new Error(`BUY RATE (${buy_rate}) DEVE SER MAIOR QUE SELL RATE (${sell_rate})!`);
+      // Get current rates if needed
+      const currentRate = await this.repo.getRateByCurrency(currencyCode);
+      if (!currentRate) {
+        throw new Error(`Currency ${currencyCode} not found`);
       }
 
-      if (buy_rate <= 0 || sell_rate <= 0) {
-        throw new Error('Taxas devem ser valores positivos');
+      const currentData = currentRate.toJSON ? currentRate.toJSON() : currentRate;
+
+      // Prepare update data
+      const updateData = { ...rateData };
+
+      // Only validate buy/sell rates if they're being updated
+      if (rateData.buy_rate !== undefined || rateData.sell_rate !== undefined) {
+        const buyRate = rateData.buy_rate !== undefined ? parseFloat(rateData.buy_rate) : parseFloat(currentData.buy_rate);
+        const sellRate = rateData.sell_rate !== undefined ? parseFloat(rateData.sell_rate) : parseFloat(currentData.sell_rate);
+
+        if (buyRate <= sellRate) {
+          throw new Error(`BUY RATE (${buyRate}) must be greater than SELL RATE (${sellRate})`);
+        }
+
+        if (buyRate <= 0 || sellRate <= 0) {
+          throw new Error('Rates must be positive values');
+        }
+
+        // Calculate new spread if rates changed
+        updateData.spread = parseFloat((((sellRate - buyRate) / buyRate) * 100).toFixed(4));
       }
 
-      const spread = ((sell_rate - buy_rate) / buy_rate * 100);
-      if (spread > 10) throw new Error('Spread máximo permitido é 10%');
-
-      const updated = await this.repo.updateRate(currencyCode, {
-        buy_rate: parseFloat(buy_rate),
-        sell_rate: parseFloat(sell_rate),
-      });
-
+      // Update the rate
+      const updated = await this.repo.updateRate(currencyCode, updateData);
       const r = updated.toJSON ? updated.toJSON() : updated;
-      const mid_rate = parseFloat(((parseFloat(r.buy_rate) + parseFloat(r.sell_rate)) / 2).toFixed(2));
 
-      return { 
-        ...r, 
-        spread: parseFloat(spread.toFixed(2)), 
-        mid_rate 
+      // Calculate mid_rate if either buy or sell rate changed
+      const mid_rate = (rateData.buy_rate !== undefined || rateData.sell_rate !== undefined)
+        ? parseFloat(((parseFloat(r.buy_rate) + parseFloat(r.sell_rate)) / 2).toFixed(2))
+        : parseFloat(currentData.mid_rate);
+
+      return {
+        ...r,
+        mid_rate,
+        spread: r.spread || currentData.spread
       };
     } catch (error) {
       throw error;

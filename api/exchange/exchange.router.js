@@ -5,7 +5,7 @@ const router = express.Router();
 // Rotas CRUD
 router.get('/', controller.getAllRates);              // GET /api/rates
 router.get('/:currencyCode', controller.getRate);    // GET /api/rates/BRL
-router.put('/:currencyCode', controller.updateRate); // PUT /api/rates/BRL
+router.patch('/:currencyCode', controller.updateRate); // PATCH /api/rates/BRL
 router.post('/', controller.addCurrency);            // POST /api/rates
 router.delete('/:currencyCode', controller.removeCurrency); // DELETE /api/rates/BRL
 
