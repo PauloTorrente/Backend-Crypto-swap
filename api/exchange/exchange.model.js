@@ -71,10 +71,14 @@ module.exports = (sequelize, DataTypes) => {
       comment: 'Comissão da plataforma (1% padrão)'
     },
     spread: {
-      type: DataTypes.DECIMAL(5, 4),
-      defaultValue: 0.0500,
-      comment: 'Spread aplicado (5% padrão)'
+    type: DataTypes.DECIMAL(5, 4),
+    defaultValue: 0.0000, 
+    validate: {
+    min: 0, 
+    max: 0 
     },
+  comment: 'Spread desativado (sempre 0)'
+  },
     last_updated: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW,

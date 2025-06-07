@@ -17,8 +17,11 @@ class ExchangeService {
       const rates = await this.repo.getAllRates();
       return rates.map(rate => {
         const r = rate.toJSON ? rate.toJSON() : rate;
+        /* CÁLCULO ORIGINAL DO SPREAD (COMENTADO)
         const spreadValue = typeof r.spread === 'number' ? r.spread : ((r.sell_rate - r.buy_rate) / r.buy_rate * 100);
         const spread = parseFloat(spreadValue.toFixed(2));
+        */
+        const spread = 0; // SPREAD FORÇADO PARA ZERO
         const mid_rate = parseFloat(((parseFloat(r.buy_rate) + parseFloat(r.sell_rate)) / 2).toFixed(2));
         return { 
           ...r, 
@@ -41,8 +44,11 @@ class ExchangeService {
       }
 
       const r = rate.toJSON ? rate.toJSON() : rate;
+      /* CÁLCULO ORIGINAL DO SPREAD (COMENTADO)
       const spreadValue = typeof r.spread === 'number' ? r.spread : ((r.sell_rate - r.buy_rate) / r.buy_rate * 100);
       const spread = parseFloat(spreadValue.toFixed(2));
+      */
+      const spread = 0; // SPREAD FORÇADO PARA ZERO
       const mid_rate = parseFloat(((parseFloat(r.buy_rate) + parseFloat(r.sell_rate)) / 2).toFixed(2));
 
       return { 
@@ -88,7 +94,7 @@ class ExchangeService {
     const rates = {
       bankFee: customParams.bankFeeRate ?? rateFrom.bank_fee,
       platformFee: customParams.platformFeeRate ?? rateUSDT.platform_fee,
-      spread: customParams.spreadRate ?? rateTo.spread,
+      spread: 0, // SPREAD FORÇADO PARA ZERO (customParams.spreadRate ?? rateTo.spread)
       exchangeRate: customParams.exchangeRate ?? rateFrom.buy_rate,
       targetRate: customParams.targetExchangeRate ?? rateTo.sell_rate
     };
@@ -102,14 +108,14 @@ class ExchangeService {
       usdtAcquired = netAfterBank / rates.exchangeRate;
       platformFee = usdtAcquired * rates.platformFee;
       netUsdt = usdtAcquired - platformFee;
-      spreadAmount = netUsdt * rates.spread;
+      spreadAmount = 0; // SPREAD FORÇADO PARA ZERO (netUsdt * rates.spread)
       finalUsdt = netUsdt - spreadAmount;
       finalAmount = finalUsdt * rates.targetRate;
     } else {
       usdtAcquired = netAfterBank / rates.exchangeRate;
       platformFee = usdtAcquired * rates.platformFee;
       netUsdt = usdtAcquired - platformFee;
-      spreadAmount = netUsdt * rates.spread;
+      spreadAmount = 0; // SPREAD FORÇADO PARA ZERO (netUsdt * rates.spread)
       finalUsdt = netUsdt - spreadAmount;
       finalAmount = finalUsdt * rateTo.sell_rate;
     }
@@ -125,14 +131,14 @@ class ExchangeService {
         usdtAcquired: parseFloat(usdtAcquired.toFixed(2)),
         platformFee: parseFloat(platformFee.toFixed(2)),
         netUsdt: parseFloat(netUsdt.toFixed(2)),
-        spread: parseFloat(spreadAmount.toFixed(2)),
+        spread: 0, // SPREAD FORÇADO PARA ZERO (parseFloat(spreadAmount.toFixed(2)))
         finalUsdt: parseFloat(finalUsdt.toFixed(2)),
         exchangeRateUsed: {
           from: parseFloat(rates.exchangeRate),
           to: parseFloat(rates.targetRate),
           usdt: parseFloat(rates.platformFee),
           bankFeeRate: parseFloat(rates.bankFee),
-          spreadRate: parseFloat(rates.spread)
+          spreadRate: 0 // SPREAD FORÇADO PARA ZERO (parseFloat(rates.spread))
         },
         isCustom: Object.keys(customParams).length > 0
       }
@@ -165,8 +171,10 @@ class ExchangeService {
           throw new Error('Rates must be positive values');
         }
 
-        // Calculate new spread if rates changed
+        /* CÁLCULO ORIGINAL DO SPREAD (COMENTADO)
         updateData.spread = parseFloat((((sellRate - buyRate) / buyRate) * 100).toFixed(4));
+        */
+        updateData.spread = 0; // SPREAD FORÇADO PARA ZERO
       }
 
       // Update the rate
@@ -181,7 +189,7 @@ class ExchangeService {
       return {
         ...r,
         mid_rate,
-        spread: r.spread || currentData.spread
+        spread: 0 // SPREAD FORÇADO PARA ZERO (r.spread || currentData.spread)
       };
     } catch (error) {
       throw error;
@@ -208,7 +216,10 @@ class ExchangeService {
       if (!currency_code || !currency_name) throw new Error('Campos obrigatórios faltando');
       if (!/^[A-Z]{3}$/.test(currency_code)) throw new Error('Código da moeda deve ter 3 letras maiúsculas');
 
+      /* CÁLCULO ORIGINAL DO SPREAD (COMENTADO)
       const spread = ((sell_rate - buy_rate) / buy_rate * 100).toFixed(2);
+      */
+      const spread = 0; // SPREAD FORÇADO PARA ZERO
 
       const newCurrency = await this.repo.createCurrency({
         currency_code: currency_code.toUpperCase(),
