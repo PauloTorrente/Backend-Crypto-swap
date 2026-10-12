@@ -1,6 +1,6 @@
 const LiveExchangeRepository = require('./exchange.live.repository');
 const sequelize = require('../../config/database');
-const { DataTypes } = require('sequelize');
+const { DataTypes, Op } = require('sequelize');
 const ExchangeRate = require('./exchange.model')(sequelize, DataTypes);
 const PairRateHistory = require('./exchange.history.model')(sequelize, DataTypes);
 
@@ -102,8 +102,10 @@ class ExchangeService {
     if (!this.hasDatabase) return pairs;
 
     const rows = await this.repo.getAllRates();
-    for (const { id, ...row } of rows) {
+    const prices = {};
+    for (const { id, sources, ...row } of rows) {
       if (row.currency_code === this.USDT_CODE) continue; // USDT é fixo em 1 (o model exige buy > sell)
+      prices[row.currency_code] = sources;
       await ExchangeRate.upsert(row, { conflictFields: ['currency_code'] });
     }
 
@@ -111,10 +113,45 @@ class ExchangeService {
       bob_per_brl: pairs.bob_per_brl,
       bob_brl: pairs.BOB_BRL,
       brl_bob: pairs.BRL_BOB,
-      margin: pairs.margin
+      margin: pairs.margin,
+      prices
     });
 
     return pairs;
+  }
+
+  // db.sync() só cria tabelas novas; adiciona a coluna "prices" se a tabela já existia sem ela
+  async ensureHistorySchema() {
+    const qi = sequelize.getQueryInterface();
+    const columns = await qi.describeTable(PairRateHistory.getTableName());
+    if (!columns.prices) {
+      await qi.addColumn(PairRateHistory.getTableName(), 'prices', { type: DataTypes.JSONB, allowNull: true });
+      console.log('✅ Coluna "prices" adicionada em pair_rate_history');
+    }
+  }
+
+  // Percorre o histórico do período em lotes (por id), para não carregar tudo na memória
+  async *iterateHistory(from, to, batchSize = 5000) {
+    if (!this.hasDatabase) {
+      throw new Error('Histórico indisponível: banco de dados não configurado');
+    }
+
+    let lastId = 0;
+    while (true) {
+      const rows = await PairRateHistory.findAll({
+        where: {
+          id: { [Op.gt]: lastId },
+          created_at: { [Op.between]: [from, to] },
+          prices: { [Op.ne]: null } // registros antigos não têm os preços de BOB e BRL
+        },
+        order: [['id', 'ASC']],
+        limit: batchSize,
+        raw: true
+      });
+      if (rows.length === 0) return;
+      yield rows;
+      lastId = rows[rows.length - 1].id;
+    }
   }
 
   async convertCurrency(fromCurrency, toCurrency, amount) {

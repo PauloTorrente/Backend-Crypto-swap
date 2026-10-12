@@ -1,5 +1,6 @@
 const cors = require('cors');
 const express = require('express');
+const path = require('path');
 const app = express();
 const db = require('./config/database'); // Certifique-se que isso exporta uma instância do Sequelize
 const router = require('./api/router');
@@ -7,10 +8,13 @@ const exchangeService = require('./api/exchange/exchange.service');
 const PORT = process.env.PORT || 3000;
 
 // ✅ Libera requisições de qualquer origem (útil para desenvolvimento local)
-app.use(cors());
+app.use(cors({ exposedHeaders: ['Content-Disposition'] })); // permite ao front ler o nome do .txt
 
 app.use(express.json()); 
 app.use('/api', router); 
+
+// Página para baixar o histórico de cotações em .txt
+app.get('/historico', (req, res) => res.sendFile(path.join(__dirname, 'public', 'historico.html')));
 
 app.get('/', async (req, res) => {
   try {
@@ -58,6 +62,7 @@ async function start() {
   if (process.env.DATABASE_URL) {
     // Cria as tabelas que ainda não existem (não altera as que já existem)
     await db.sync();
+    await exchangeService.ensureHistorySchema();
     console.log('✅ Tabelas sincronizadas com o banco de dados');
   }
 

@@ -132,7 +132,9 @@ class LiveExchangeRepository {
         bank_fee: 0.01,
         platform_fee: 0.01,
         spread: 0,
-        last_updated: now
+        last_updated: now,
+        // Preço de cada corretora (o que aparece nas linhas 💱); não é coluna de exchange_rates
+        sources: q.sources.map(({ exchange, buy, sell }) => ({ exchange, buy, sell }))
       };
     }));
 

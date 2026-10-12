@@ -24,6 +24,11 @@ module.exports = (sequelize, DataTypes) => {
     margin: {
       type: DataTypes.DECIMAL(10, 4),
       allowNull: false
+    },
+    prices: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      comment: 'Preço do USDT em BOB e BRL por corretora: { BOB: [{ exchange, buy, sell }], BRL: [...] }'
     }
   }, {
     tableName: 'pair_rate_history',

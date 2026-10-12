@@ -107,6 +107,80 @@ class ExchangeController {
     }
   }
 
+  // Download do histórico em .txt: preço do USDT em BRL e BOB por corretora (sem as taxas com margem)
+  // GET /api/rates/history/download?from=<ISO>&to=<ISO>&tz=America/La_Paz
+  async downloadHistory(req, res) {
+    const from = new Date(req.query.from);
+    const to = new Date(req.query.to);
+    if (isNaN(from) || isNaN(to)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Parameters "from" and "to" must be valid dates'
+      });
+    }
+    if (from > to) {
+      return res.status(400).json({
+        success: false,
+        message: '"from" must be before "to"'
+      });
+    }
+
+    // Fuso usado para mostrar os horários no arquivo (o servidor roda em UTC)
+    let timeZone = req.query.tz || 'America/La_Paz';
+    try {
+      new Intl.DateTimeFormat('pt-BR', { timeZone });
+    } catch {
+      timeZone = 'America/La_Paz';
+    }
+    const fmt = date => new Date(date).toLocaleString('pt-BR', { timeZone });
+    const num = v => parseFloat(v).toFixed(4);
+    const day = date => fmt(date).slice(0, 10).split('/').reverse().join('-');
+
+    console.log(`📄 Downloading history ${from.toISOString()} → ${to.toISOString()}...`);
+
+    try {
+      const batches = service.iterateHistory(from, to);
+      const first = await batches.next(); // valida o banco antes de começar a enviar o arquivo
+
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="cotacoes_${day(from)}_a_${day(to)}.txt"`
+      );
+
+      res.write(`Histórico de preços do USDT em BRL e BOB (compra/venda por corretora)\n`);
+      res.write(`Período: ${fmt(from)} até ${fmt(to)} (${timeZone})\n\n`);
+
+      let count = 0;
+      const writeRows = rows => {
+        for (const r of rows) {
+          const prices = ['BRL', 'BOB'].map(code => {
+            const sources = (r.prices[code] || [])
+              .map(s => `${s.exchange} ${num(s.buy)}/${num(s.sell)}`)
+              .join(', ');
+            return `${code}: ${sources || '-'}`;
+          });
+          res.write(`[${fmt(r.created_at)}] ${prices.join(' | ')}\n`);
+        }
+        count += rows.length;
+      };
+
+      if (!first.done) writeRows(first.value);
+      for await (const rows of batches) writeRows(rows);
+
+      res.end(count === 0 ? 'Nenhum registro no período.\n' : `\nTotal: ${count} registros\n`);
+    } catch (error) {
+      console.error('❌ Error downloading history:', error.message);
+      if (res.headersSent) return res.end(`\nERRO: ${error.message}\n`);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to download history',
+        error: error.message,
+        ...(process.env.NODE_ENV === 'development' && { stack: error.stack })
+      });
+    }
+  }
+
   // Currency conversion with optional custom rates
   async convert(req, res) {
     try {
