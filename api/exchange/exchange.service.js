@@ -1,11 +1,16 @@
-const ExchangeRepository = require('./exchange.repository');
+const LiveExchangeRepository = require('./exchange.live.repository');
 const sequelize = require('../../config/database');
-const ExchangeRate = require('./exchange.model')(sequelize, require('sequelize').DataTypes);
+const { DataTypes } = require('sequelize');
+const ExchangeRate = require('./exchange.model')(sequelize, DataTypes);
+const PairRateHistory = require('./exchange.history.model')(sequelize, DataTypes);
 
 class ExchangeService {
   constructor() {
-    this.repo = new ExchangeRepository(ExchangeRate);
+    // As cotações sempre vêm da Binance/Bybit; o banco (se configurado) só guarda o registro
+    this.repo = new LiveExchangeRepository();
+    this.hasDatabase = Boolean(process.env.DATABASE_URL);
     this.USDT_CODE = 'USDT';
+    this.PAIR_MARGIN = 0.035; // margem somada/subtraída da cotação BOB/BRL
     this.SUPPORTED_PAIRS = [
       { from: 'BRL', to: 'BOB' },
       { from: 'BOB', to: 'BRL' }
@@ -63,84 +68,77 @@ class ExchangeService {
     }
   }
 
-  async convertCurrency(fromCurrency, toCurrency, amount, customParams = {}) {
-    if (!this.isSupportedPair(fromCurrency, toCurrency)) {
-      throw new Error(`Currency pair ${fromCurrency}-${toCurrency} not supported`);
+  // Cotação BOB/BRL (quantos BOB valem 1 BRL), usando a taxa média de cada moeda em USDT
+  //   BOB → BRL: (BOB/BRL) + margem
+  //   BRL → BOB: (BOB/BRL) - margem
+  async getPairRates() {
+    const [bob, brl] = await Promise.all([
+      this.repo.getRateByCurrency('BOB'),
+      this.repo.getRateByCurrency('BRL')
+    ]);
+    if (!bob || !brl) {
+      throw new Error('BOB or BRL not found');
     }
 
-    const [rateFrom, rateTo, rateUSDT] = await Promise.all([
-      this.repo.getRateByCurrency(fromCurrency),
-      this.repo.getRateByCurrency(toCurrency),
-      this.repo.getRateByCurrency(this.USDT_CODE)
-    ]);
+    const mid = r => (parseFloat(r.buy_rate) + parseFloat(r.sell_rate)) / 2;
+    const bobPerBrl = mid(bob) / mid(brl);
 
-    if (!rateFrom || !rateTo || !rateUSDT) {
-      throw new Error('Currency not found in database');
+    return {
+      bob_per_brl: bobPerBrl,
+      margin: this.PAIR_MARGIN,
+      BOB_BRL: bobPerBrl + this.PAIR_MARGIN,
+      BRL_BOB: bobPerBrl - this.PAIR_MARGIN
+    };
+  }
+
+  // Conversão usando as cotações do par (já com a margem de PAIR_MARGIN)
+  //   BRL → BOB: valor × BRL_BOB
+  //   BOB → BRL: valor ÷ BOB_BRL
+  // Busca as cotações atuais e, se houver banco, grava:
+  //   - exchange_rates: cotação atual de BOB e BRL (uma linha por moeda, atualizada)
+  //   - pair_rate_history: uma linha nova com as taxas do par
+  async saveSnapshot() {
+    const pairs = await this.getPairRates();
+    if (!this.hasDatabase) return pairs;
+
+    const rows = await this.repo.getAllRates();
+    for (const { id, ...row } of rows) {
+      if (row.currency_code === this.USDT_CODE) continue; // USDT é fixo em 1 (o model exige buy > sell)
+      await ExchangeRate.upsert(row, { conflictFields: ['currency_code'] });
+    }
+
+    await PairRateHistory.create({
+      bob_per_brl: pairs.bob_per_brl,
+      bob_brl: pairs.BOB_BRL,
+      brl_bob: pairs.BRL_BOB,
+      margin: pairs.margin
+    });
+
+    return pairs;
+  }
+
+  async convertCurrency(fromCurrency, toCurrency, amount) {
+    if (!this.isSupportedPair(fromCurrency, toCurrency)) {
+      throw new Error(`Currency pair ${fromCurrency}-${toCurrency} not supported`);
     }
 
     if (amount <= 0) {
       throw new Error('Amount must be greater than zero');
     }
 
-    // VALIDAÇÃO EXPLÍCITA DAS TAXAS
-    if (parseFloat(rateFrom.buy_rate) <= parseFloat(rateFrom.sell_rate)) {
-      throw new Error(`BUY RATE (${rateFrom.buy_rate}) DEVE SER MAIOR QUE SELL RATE (${rateFrom.sell_rate}) PARA ${fromCurrency}`);
-    }
-
-    if (parseFloat(rateTo.buy_rate) <= parseFloat(rateTo.sell_rate)) {
-      throw new Error(`BUY RATE (${rateTo.buy_rate}) DEVE SER MAIOR QUE SELL RATE (${rateTo.sell_rate}) PARA ${toCurrency}`);
-    }
-
-    const rates = {
-      bankFee: customParams.bankFeeRate ?? rateFrom.bank_fee,
-      platformFee: customParams.platformFeeRate ?? rateUSDT.platform_fee,
-      spread: 0, // SPREAD FORÇADO PARA ZERO (customParams.spreadRate ?? rateTo.spread)
-      exchangeRate: customParams.exchangeRate ?? rateFrom.buy_rate,
-      targetRate: customParams.targetExchangeRate ?? rateTo.sell_rate
-    };
-
-    const bankFee = amount * rates.bankFee;
-    const netAfterBank = amount - bankFee;
-
-    let usdtAcquired, platformFee, netUsdt, spreadAmount, finalUsdt, finalAmount;
-
-    if (fromCurrency === 'BRL' && toCurrency === 'BOB') {
-      usdtAcquired = netAfterBank / rates.exchangeRate;
-      platformFee = usdtAcquired * rates.platformFee;
-      netUsdt = usdtAcquired - platformFee;
-      spreadAmount = 0; // SPREAD FORÇADO PARA ZERO (netUsdt * rates.spread)
-      finalUsdt = netUsdt - spreadAmount;
-      finalAmount = finalUsdt * rates.targetRate;
-    } else {
-      usdtAcquired = netAfterBank / rates.exchangeRate;
-      platformFee = usdtAcquired * rates.platformFee;
-      netUsdt = usdtAcquired - platformFee;
-      spreadAmount = 0; // SPREAD FORÇADO PARA ZERO (netUsdt * rates.spread)
-      finalUsdt = netUsdt - spreadAmount;
-      finalAmount = finalUsdt * rateTo.sell_rate;
-    }
+    const pairs = await this.getPairRates();
+    const rateUsed = fromCurrency === 'BRL' ? pairs.BRL_BOB : pairs.BOB_BRL;
+    const finalAmount = fromCurrency === 'BRL' ? amount * rateUsed : amount / rateUsed;
 
     return {
-      originalAmount: parseFloat(amount.toFixed(2)),
+      originalAmount: amount,
       fromCurrency,
       toCurrency,
-      finalAmount: parseFloat(finalAmount.toFixed(2)),
-      steps: {
-        bankFee: parseFloat(bankFee.toFixed(2)),
-        netAfterBank: parseFloat(netAfterBank.toFixed(2)),
-        usdtAcquired: parseFloat(usdtAcquired.toFixed(2)),
-        platformFee: parseFloat(platformFee.toFixed(2)),
-        netUsdt: parseFloat(netUsdt.toFixed(2)),
-        spread: 0, // SPREAD FORÇADO PARA ZERO (parseFloat(spreadAmount.toFixed(2)))
-        finalUsdt: parseFloat(finalUsdt.toFixed(2)),
-        exchangeRateUsed: {
-          from: parseFloat(rates.exchangeRate),
-          to: parseFloat(rates.targetRate),
-          usdt: parseFloat(rates.platformFee),
-          bankFeeRate: parseFloat(rates.bankFee),
-          spreadRate: 0 // SPREAD FORÇADO PARA ZERO (parseFloat(rates.spread))
-        },
-        isCustom: Object.keys(customParams).length > 0
+      finalAmount,
+      rates: {
+        bob_per_brl: pairs.bob_per_brl,
+        margin: pairs.margin,
+        rateUsed
       }
     };
   }

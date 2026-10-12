@@ -80,10 +80,37 @@ class ExchangeController {
     }
   }
 
+  // BOB ↔ BRL pair rates with margin
+  async getPairRates(req, res) {
+    try {
+      console.log('💱 Fetching BOB/BRL pair rates...');
+      const pairs = await service.getPairRates();
+
+      res.json({
+        success: true,
+        data: {
+          bob_per_brl: pairs.bob_per_brl.toFixed(4),
+          margin: pairs.margin.toFixed(3),
+          BOB_BRL: pairs.BOB_BRL.toFixed(4),
+          BRL_BOB: pairs.BRL_BOB.toFixed(4)
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('❌ Error fetching pair rates:', error.message);
+      res.status(500).json({ 
+        success: false,
+        message: 'Failed to load pair rates',
+        error: error.message,
+        ...(process.env.NODE_ENV === 'development' && { stack: error.stack })
+      });
+    }
+  }
+
   // Currency conversion with optional custom rates
   async convert(req, res) {
     try {
-      const { from, to, amount, customRates } = req.body;
+      const { from, to, amount } = req.body;
       console.log(`🔄 Converting ${amount} ${from} → ${to}...`);
 
       // Validate required fields
@@ -122,37 +149,20 @@ class ExchangeController {
       const result = await service.convertCurrency(
         from.toUpperCase(), 
         to.toUpperCase(), 
-        numericAmount,
-        customRates
+        numericAmount
       );
 
       // Format response
       const response = {
         success: true,
-        originalAmount: parseFloat(result.originalAmount).toFixed(2),
+        originalAmount: result.originalAmount.toFixed(2),
         fromCurrency: result.fromCurrency,
         toCurrency: result.toCurrency,
-        finalAmount: parseFloat(result.finalAmount).toFixed(2),
-        steps: {
-          bankFee: parseFloat(result.steps.bankFee).toFixed(2),
-          netAfterBank: parseFloat(result.steps.netAfterBank).toFixed(2),
-          usdtAcquired: parseFloat(result.steps.usdtAcquired).toFixed(2),
-          platformFee: parseFloat(result.steps.platformFee).toFixed(2),
-          netUsdt: parseFloat(result.steps.netUsdt).toFixed(2),
-          spread: parseFloat(result.steps.spread).toFixed(2),
-          finalUsdt: parseFloat(result.steps.finalUsdt).toFixed(2),
-          exchangeRateUsed: {
-            from: parseFloat(result.steps.exchangeRateUsed.from).toFixed(2),
-            to: parseFloat(result.steps.exchangeRateUsed.to).toFixed(2),
-            usdt: parseFloat(result.steps.exchangeRateUsed.usdt).toFixed(4),
-            ...(result.steps.exchangeRateUsed.bankFeeRate && {
-              bankFeeRate: parseFloat(result.steps.exchangeRateUsed.bankFeeRate).toFixed(4)
-            }),
-            ...(result.steps.exchangeRateUsed.spreadRate && {
-              spreadRate: parseFloat(result.steps.exchangeRateUsed.spreadRate).toFixed(4)
-            })
-          },
-          isCustom: result.steps.isCustom || false
+        finalAmount: result.finalAmount.toFixed(2),
+        rates: {
+          bob_per_brl: result.rates.bob_per_brl.toFixed(4),
+          margin: result.rates.margin.toFixed(3),
+          rateUsed: result.rates.rateUsed.toFixed(4)
         },
         timestamp: new Date().toISOString()
       };
