@@ -4,8 +4,6 @@ const verifyToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader?.split(' ')[1];
   
-  console.log('🔎 Received auth header:', authHeader); // Log 1
-  console.log('🔍 Extracted token:', token); // Log 2
 
   if (!token) {
     console.log('🚫 No token provided'); // Log 3
@@ -18,14 +16,12 @@ const verifyToken = (req, res, next) => {
       return res.status(401).json({ message: 'Unauthorized' });
     }
     
-    console.log('✅ Token decoded successfully:', decoded); // Log 5
     req.user = decoded;
     next();
   });
 };
 
 const checkAdmin = (req, res, next) => {
-  console.log('🛂 User data in checkAdmin:', req.user); // Log 6
   
   if (!req.user) {
     console.log('👤 No user data in request'); // Log 7
@@ -37,7 +33,6 @@ const checkAdmin = (req, res, next) => {
     return res.status(403).json({ message: 'Access denied: admin only' });
   }
 
-  console.log('🆗 Admin access granted'); // Log 9
   next();
 };
 

@@ -2,7 +2,9 @@ const usersService = require('./users.service');
 const jwt = require('jsonwebtoken'); 
 
 const registerUser = async (req, res) => {
-  const { email, password, role = 'user' } = req.body;
+  // O cadastro público sempre cria 'user'; admins são criados por scripts/create-admin.js
+  const { email, password } = req.body;
+  const role = 'user';
 
   try {
     const existingUser = await usersService.findUserByEmail(email);

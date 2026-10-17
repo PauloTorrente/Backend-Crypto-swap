@@ -94,6 +94,20 @@ class ExchangeService {
   // Conversão usando as cotações do par (já com a margem de PAIR_MARGIN)
   //   BRL → BOB: valor × BRL_BOB
   //   BOB → BRL: valor ÷ BOB_BRL
+  // Preço atual de 1 USDT em BOB e BRL (média compra/venda das corretoras) + o detalhe de cada uma
+  async getUsdtPrices() {
+    const rows = await this.repo.getAllRates();
+    const prices = {};
+    for (const r of rows) {
+      if (r.currency_code === this.USDT_CODE) continue;
+      prices[r.currency_code] = {
+        mid: (parseFloat(r.buy_rate) + parseFloat(r.sell_rate)) / 2,
+        sources: r.sources
+      };
+    }
+    return prices;
+  }
+
   // Busca as cotações atuais e, se houver banco, grava:
   //   - exchange_rates: cotação atual de BOB e BRL (uma linha por moeda, atualizada)
   //   - pair_rate_history: uma linha nova com as taxas do par
