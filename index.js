@@ -8,7 +8,7 @@ const exchangeService = require('./api/exchange/exchange.service');
 const PORT = process.env.PORT || 3000;
 
 // ✅ Libera requisições de qualquer origem (útil para desenvolvimento local)
-app.use(cors({ exposedHeaders: ['Content-Disposition'] })); // permite ao front ler o nome do .txt
+app.use(cors({ exposedHeaders: ['Content-Disposition', 'X-Conciliacion-Resumen'] })); // nome do arquivo e resumo da conciliação para o front
 
 app.use(express.json()); 
 app.use('/api', router); 
