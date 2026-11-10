@@ -1,6 +1,6 @@
 // Gera o "Relatorio de lucro" preenchido: a aba Resumo (com gráficos), as abas dos extratos (na
 // mesma numeração usada nas fórmulas), a aba Cambios com as fórmulas apontando para elas, a aba
-// P2P e a aba Pendientes.
+// P2P, a aba Validación P2P (ordens × banco × mercado) e a aba Pendientes.
 const ExcelJS = require('exceljs');
 const { BANKS, P2P } = require('./conciliacion.parser');
 const { writeResumo } = require('./conciliacion.summary');
@@ -29,6 +29,82 @@ const CAMBIOS_COLUMNS = [
 ];
 
 const asUtcDate = iso => new Date(`${iso}T00:00:00Z`);
+const EXCHANGE_NAMES = Object.fromEntries(Object.entries(P2P).map(([sheet, c]) => [sheet, c.name]));
+const fill = argb => (argb ? { type: 'pattern', pattern: 'solid', fgColor: { argb } } : undefined);
+const GREEN = 'FFD9F2D9';
+const YELLOW = 'FFFFF4CC';
+const RED = 'FFF8D7DA';
+const BANK_COLORS = { Conciliada: GREEN, 'Falta extracto': YELLOW, 'Otra moneda': YELLOW, 'Sin movimiento en banco': RED };
+const MARKET_COLORS = { OK: GREEN, 'Sin cotización': YELLOW, 'Revisar (muy distinto)': YELLOW, Desfavorable: RED };
+
+// Aba "Validación P2P": resumo em cima e uma linha por ordem completada; no fim, as ordens
+// canceladas que têm o valor no banco
+const VALIDATION_HEADER_ROW = 9;
+function writeValidacion(ws, v) {
+  const r = v.resumen;
+  const lines = [
+    ['Validación de las órdenes P2P', null],
+    ['Órdenes completadas', r.ordenes],
+    ['Banco ↔ exchange', Object.entries(r.banco).map(([k, n]) => `${k}: ${n}`).join(' · ')],
+    ['Exchange ↔ mercado', ['OK', 'Desfavorable', 'Revisar (muy distinto)', 'Sin cotización'].filter(k => r.mercado[k]).map(k => `${k}: ${r.mercado[k]}`).join(' · ')],
+    ['Referencia de precio', `cotización de mercado en la hora: ${r.mercado.contra_mercado} · mediana de las propias órdenes: ${r.mercado.contra_mediana}`],
+    ['Costo frente al mercado (USDT)', r.mercado.costo_desfavorable_usdt],
+    ['Canceladas con movimiento en banco', r.canceladas_con_movimiento]
+  ];
+  lines.forEach(([label, value], i) => {
+    const row = ws.getRow(i + 1);
+    row.values = [label, value];
+    row.getCell(1).font = { bold: true, size: i ? 11 : 14 };
+  });
+
+  const headers = [
+    ['Orden', 22], ['Exchange', 10], ['Fecha', 18], ['Tipo', 8], ['Moneda', 8], ['Monto fiat', 13], ['Precio', 9],
+    ['USDT', 11], ['Contraparte', 22], ['Banco', 26], ['Validación banco', 22], ['Detalle', 44],
+    ['Precio mercado', 11], ['Referencia', 26], ['Desvío', 9], ['Costo USDT', 11], ['Validación mercado', 20]
+  ];
+  headers.forEach(([, width], i) => (ws.getColumn(i + 1).width = width));
+  const header = ws.getRow(VALIDATION_HEADER_ROW);
+  header.values = headers.map(([h]) => h);
+  header.font = { bold: true };
+
+  // Primeiro o que precisa de atenção
+  const order = { 'Sin movimiento en banco': 0, 'Falta extracto': 2, 'Otra moneda': 3, Conciliada: 4 };
+  const rank = o => order[o.banco_estado] - (o.mercado_estado === 'Desfavorable' ? 1 : 0);
+  const rows = [...v.ordenes].sort((a, b) => rank(a) - rank(b) || a.fecha.localeCompare(b.fecha));
+  rows.forEach((o, i) => {
+    const row = ws.getRow(VALIDATION_HEADER_ROW + 1 + i);
+    row.values = [
+      { formula: o.ref, result: o.orden }, o.exchange, new Date(o.fecha), o.tipo, o.moneda, o.monto, o.precio, o.usdt, o.contraparte,
+      o.banco ? { formula: o.banco, result: o.monto * (o.tipo === 'Compra' ? -1 : 1) } : null,
+      o.banco_estado, o.banco_detalle, o.mercado, o.mercado_fuente, o.desvio, o.costo_usdt, o.mercado_estado
+    ];
+    row.getCell(3).numFmt = 'dd/mm/yyyy hh:mm';
+    row.getCell(6).numFmt = '#,##0.00';
+    row.getCell(10).numFmt = '#,##0.00';
+    row.getCell(15).numFmt = '0.00%';
+    row.getCell(11).fill = fill(BANK_COLORS[o.banco_estado]);
+    row.getCell(17).fill = fill(MARKET_COLORS[o.mercado_estado]);
+  });
+  const lastRow = VALIDATION_HEADER_ROW + rows.length;
+  ws.autoFilter = { from: { row: VALIDATION_HEADER_ROW, column: 1 }, to: { row: lastRow, column: headers.length } };
+
+  if (!v.canceladas.length) return;
+  const start = lastRow + 3;
+  ws.getRow(start).values = ['Órdenes canceladas con el valor en el banco (revisar: el dinero se movió aunque la orden se canceló)'];
+  ws.getRow(start).font = { bold: true, color: { argb: 'FFC0504D' } };
+  const cHeader = ws.getRow(start + 1);
+  cHeader.values = ['Orden', 'Exchange', 'Fecha', 'Tipo', 'Moneda', 'Monto fiat', 'Estado', null, 'Contraparte', 'Banco', 'Nombre en el banco'];
+  cHeader.font = { bold: true };
+  v.canceladas.forEach((o, i) => {
+    const row = ws.getRow(start + 2 + i);
+    row.values = [
+      { formula: o.ref, result: o.orden }, o.exchange, new Date(o.fecha), o.tipo, o.moneda, o.monto, o.estado, null, o.contraparte,
+      { formula: o.banco, result: o.monto * (o.tipo === 'Compra' ? -1 : 1) }, o.banco_contraparte
+    ];
+    row.getCell(3).numFmt = 'dd/mm/yyyy hh:mm';
+    row.getCell(7).fill = fill(RED);
+  });
+}
 const bold = ws => (ws.getRow(1).font = { bold: true });
 
 async function buildWorkbook(parsed, result) {
@@ -41,7 +117,13 @@ async function buildWorkbook(parsed, result) {
   result.cambios.forEach((c, i) =>
     [...c.recibido.lancamentos, ...c.entregado.lancamentos].forEach(l => use.set(l.id, `Cambios fila ${i + 2} (${c.confianza})`))
   );
-  for (const m of result.p2p) use.set(m.bank, `P2P ${m.order}`);
+  // Lançamento identificado como ordem P2P: exchange, lado, apelido e nº da ordem
+  const orders = new Map(parsed.p2p.map(o => [o.id, o]));
+  for (const m of result.p2p) {
+    const o = orders.get(m.order);
+    const label = o ? `P2P ${EXCHANGE_NAMES[o.sheet] || o.sheet} ${o.side} ${o.counterparty} #${o.order}` : `P2P ${m.order}`;
+    for (const id of m.banks || [m.bank]) use.set(id, label);
+  }
   for (const e of result.excluidos) if (!use.has(e.id)) use.set(e.id, e.motivo);
   for (const p of result.pendientes) use.set(p.id, 'Pendiente');
 
@@ -104,19 +186,36 @@ async function buildWorkbook(parsed, result) {
     bold(ws);
   }
 
-  // Ordens P2P (cópia das abas BYBIT/BNB recebidas, na numeração usada pelo matcher)
+  // Ordens P2P (abas BYBIT/BNB/BNBPF na numeração usada pelo matcher, inclusive as canceladas), com o
+  // resultado da validação ao lado
+  const checks = new Map((result.validacion?.ordenes || []).map(v => [v.id, v]));
   for (const sheet of Object.keys(P2P)) {
-    const orders = parsed.p2p.filter(o => o.sheet === sheet);
-    if (!orders.length) continue;
+    const sheetOrders = parsed.p2p.filter(o => o.sheet === sheet);
+    if (!sheetOrders.length) continue;
     const c = P2P[sheet];
-    const ws = wb.addWorksheet(sheet);
-    ws.columns = [c.date, c.order, c.side, c.fiat, c.amount, c.price, c.usdt, c.counterparty, c.status].map(header => ({ header, width: 16 }));
-    for (const o of orders) {
-      ws.getRow(o.row).values = [o.date, o.order, o.side, o.currency, o.amount, o.price, o.usdt, o.counterparty, 'Completado'];
-      ws.getRow(o.row).getCell(1).numFmt = 'dd/mm/yyyy hh:mm:ss';
+    const ws = wb.addWorksheet(sheet, { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws.columns = [c.date, c.order, c.side, c.fiat, c.amount, c.price, c.usdt, c.counterparty, c.status, 'Comisión (USDT)', 'Banco', 'Validación banco', 'Mercado', 'Desvío vs mercado']
+      .map(header => ({ header, width: 16 }));
+    for (const o of sheetOrders) {
+      const v = checks.get(o.id);
+      const row = ws.getRow(o.row);
+      row.values = [
+        o.date, o.order, o.side, o.currency, o.amount, o.price, o.usdt, o.counterparty, o.status, o.fee ?? null,
+        v?.banco ? { formula: v.banco, result: o.amount * (o.side === 'Compra' ? -1 : 1) } : null,
+        v?.banco_estado ?? null,
+        v?.mercado ?? null,
+        v?.desvio ?? null
+      ];
+      row.getCell(1).numFmt = 'dd/mm/yyyy hh:mm:ss';
+      row.getCell(14).numFmt = '0.00%';
+      if (v) row.getCell(12).fill = fill(BANK_COLORS[v.banco_estado]);
+      if (v) row.getCell(14).fill = fill(MARKET_COLORS[v.mercado_estado]);
     }
     bold(ws);
+    ws.autoFilter = { from: 'A1', to: 'N1' };
   }
+
+  if (result.validacion) writeValidacion(wb.addWorksheet('Validación P2P', { views: [{ state: 'frozen', ySplit: VALIDATION_HEADER_ROW }] }), result.validacion);
 
   // P2P ↔ banco
   const p2p = wb.addWorksheet('P2P');

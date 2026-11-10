@@ -4,7 +4,7 @@
 const { Op } = require('sequelize');
 const CotacaoManual = require('./cotacao-manual.model');
 const exchangeService = require('../exchange/exchange.service');
-const { historyFromSnapshots } = require('./conciliacion.sources');
+const { historyFromSnapshots, sideHistoryFromSnapshots } = require('./conciliacion.sources');
 
 // Os extratos estão na hora da Bolívia (UTC−4, sem horário de verão); o banco, em UTC
 const LOCAL_OFFSET_MS = -4 * 3600 * 1000;
@@ -18,14 +18,15 @@ function periodOf(bank) {
   return { from: new Date(Math.min(...times) - DAY_MS), to: new Date(Math.max(...times) + 2 * DAY_MS) };
 }
 
+// → { history (média compra/venda), market (compra e venda separadas) }
 async function historyFromDatabase(bank) {
-  if (!exchangeService.hasDatabase || !bank.length) return {};
+  if (!exchangeService.hasDatabase || !bank.length) return { history: {}, market: {} };
   const { from, to } = periodOf(bank);
   const snapshots = [];
   for await (const rows of exchangeService.iterateHistory(new Date(+from - LOCAL_OFFSET_MS), new Date(+to - LOCAL_OFFSET_MS))) {
     for (const r of rows) snapshots.push({ time: new Date(+new Date(r.created_at) + LOCAL_OFFSET_MS), prices: r.prices });
   }
-  return historyFromSnapshots(snapshots);
+  return { history: historyFromSnapshots(snapshots), market: sideHistoryFromSnapshots(snapshots) };
 }
 
 // → { BRL: { '2026-10-01': 5.22 }, BOB: { ... } }
@@ -40,13 +41,15 @@ async function manualPrices(bank) {
 
 // Tudo o que a conciliação precisa do banco. O histórico só é buscado se não veio um .txt.
 // Com o banco fora do ar, falha em vez de seguir sem as cotações manuais (o lucro mudaria sem aviso).
+// O período vem dos extratos e das ordens P2P (dá para validar só as ordens contra o mercado).
 async function loadDbPrices(parsed) {
+  const dated = [...parsed.bank, ...(parsed.p2p || [])];
   try {
-    const [history, manual] = await Promise.all([
-      Object.keys(parsed.history || {}).length ? parsed.history : historyFromDatabase(parsed.bank),
-      manualPrices(parsed.bank)
+    const [quotes, manual] = await Promise.all([
+      Object.keys(parsed.history || {}).length ? { history: parsed.history, market: parsed.market || {} } : historyFromDatabase(dated),
+      manualPrices(dated)
     ]);
-    return { history, manualPrices: manual };
+    return { ...quotes, manualPrices: manual };
   } catch (error) {
     const reason = error.parent?.code || error.message || error.name;
     throw new Error(`Banco de dados indisponível (${reason}): não deu para ler as cotações. Tente de novo.`);

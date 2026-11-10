@@ -20,7 +20,8 @@
     "jszip": "^3.10.2",
     "multer": "^2.0.2",
     "pg": "^8.14.1",
-    "sequelize": "^6.37.7"
+    "sequelize": "^6.37.7",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

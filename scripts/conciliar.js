@@ -1,5 +1,5 @@
 // Roda a conciliação sem subir o servidor. Aceita vários arquivos de uma vez:
-// extratos crus (Banco Económico .xlsx, PicPay .csv), cotações (.txt de /historico) e o "Relatorio de lucro".
+// extratos crus (Banco Económico .xlsx, PicPay .csv, Fiducia .xlsx), ordens P2P (Bybit .xls, Binance .xlsx), cotações (.txt de /historico) e o "Relatorio de lucro".
 //   node scripts/conciliar.js extrato1.xlsx picpay.csv cotacoes.txt "Relatorio.xlsx"  → resumo + tabela
 //   ... --xlsx saida.xlsx   grava a planilha preenchida (extratos + Cambios com fórmulas + P2P + Pendientes)
 //   ... --tsv               linhas para colar na aba Cambios
@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { parseFiles } = require('../api/conciliacion/conciliacion.sources');
 const { reconcile } = require('../api/conciliacion/conciliacion.matcher');
+const { validate } = require('../api/conciliacion/conciliacion.validacion');
 const { buildWorkbook } = require('../api/conciliacion/conciliacion.workbook');
 const { toTsv } = require('../api/conciliacion/conciliacion.router');
 const prices = require('../api/conciliacion/conciliacion.prices');
@@ -30,9 +31,12 @@ async function main() {
     { desde: option('--desde'), hasta: option('--hasta') }
   );
   // Histórico (se não veio .txt) e cotações manuais do banco, quando DATABASE_URL está configurada
-  const { history, manualPrices } = await prices.loadDbPrices(parsed);
-  parsed.history = history;
-  const result = reconcile(parsed, { useLinked: !args.includes('--todos'), manualPrices });
+  const { history, market, manualPrices } = await prices.loadDbPrices(parsed);
+  Object.assign(parsed, { history, market });
+  const useLinked = !args.includes('--todos');
+  const result = reconcile(parsed, { useLinked, manualPrices });
+  result.validacion = validate(parsed, result, { useLinked });
+  result.resumen.validacion = result.validacion.resumen;
 
   if (args.includes('--tsv')) return console.log(toTsv(result.cambios));
   if (args.includes('--json')) return console.log(JSON.stringify(result, null, 2));

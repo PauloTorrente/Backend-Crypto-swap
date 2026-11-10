@@ -10,10 +10,12 @@ const BANKS = {
   PICPAY: { currency: 'BRL', date: 'Data', amount: 'Valor (BRL)', type: 'Movimento', counterparty: 'Descrição' }
 };
 
-// Ordens P2P: dão a cotação do USDT do dia e explicam lançamentos que não são câmbio
+// Ordens P2P: dão a cotação do USDT do dia e explicam lançamentos que não são câmbio.
+// BNB = Binance da empresa (JOAO SOLUCOES, BRL); BNBPF = Binance pessoal (João Alonso, BOB)
 const P2P = {
-  BYBIT: { date: 'Fecha y hora', order: 'Nº de orden', side: 'Tipo', fiat: 'Fiat', amount: 'Monto fiat', price: 'Precio (fiat/USDT)', usdt: 'Cantidad USDT', counterparty: 'Contraparte', status: 'Estado' },
-  BNB: { date: 'Fecha y hora', order: 'Nº de orden', side: 'Tipo', fiat: 'Fiat', amount: 'Total BRL', price: 'Precio (BRL/USDT)', usdt: 'Cantidad USDT', counterparty: 'Contraparte', status: 'Estado' }
+  BYBIT: { name: 'Bybit', date: 'Fecha y hora', order: 'Nº de orden', side: 'Tipo', fiat: 'Fiat', amount: 'Monto fiat', price: 'Precio (fiat/USDT)', usdt: 'Cantidad USDT', counterparty: 'Contraparte', status: 'Estado' },
+  BNB: { name: 'Binance', date: 'Fecha y hora', order: 'Nº de orden', side: 'Tipo', fiat: 'Fiat', amount: 'Total BRL', price: 'Precio (BRL/USDT)', usdt: 'Cantidad USDT', counterparty: 'Contraparte', status: 'Estado' },
+  BNBPF: { name: 'Binance PF', date: 'Fecha y hora', order: 'Nº de orden', side: 'Tipo', fiat: 'Fiat', amount: 'Monto fiat', price: 'Precio (fiat/USDT)', usdt: 'Cantidad USDT', counterparty: 'Contraparte', status: 'Estado' }
 };
 
 const value = cell => {
@@ -79,7 +81,7 @@ function parseBank(ws, sheet, cfg) {
     .filter(Boolean);
 }
 
-function parseP2P(ws, sheet, cfg) {
+function parseP2P(ws, sheet, { name, ...cfg }) {
   return readSheet(ws, cfg)
     .rows.map(r => {
       const date = asDate(r.date);
@@ -96,7 +98,8 @@ function parseP2P(ws, sheet, cfg) {
         amount,
         price: num(r.price),
         usdt: num(r.usdt),
-        counterparty: String(r.counterparty ?? '').trim()
+        counterparty: String(r.counterparty ?? '').trim(),
+        status: 'Completado'
       };
     })
     .filter(Boolean);

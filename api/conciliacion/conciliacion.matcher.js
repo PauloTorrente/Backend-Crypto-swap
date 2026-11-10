@@ -28,6 +28,7 @@ const DEFAULTS = {
   maxLegSpanHours: 3, // lançamentos com hora só se somam se estiverem perto
   maxDayDiff: 1,
   p2pMaxHours: 3,
+  lateHour: 20, // ordem a partir das 20 h: o Pix pode cair no extrato sem hora (FIDU/PICPAY) no dia seguinte
   prices: {}, // cotação de reserva por moeda, quando não houver ordem P2P no período
   manualPrices: {} // { BRL: { '2026-10-01': 5.22 } }: tabela cotacoes_manuais, só para dias sem cotação própria
 };
@@ -112,7 +113,7 @@ function matchP2P(bank, p2p, cfg) {
     for (const t of bank) {
       if (t.excluded || t.currency !== o.currency || Math.sign(t.amount) !== sign) continue;
       if (Math.abs(Math.abs(t.amount) - o.amount) > 0.01) continue;
-      if (t.hasTime ? Math.abs(t.date - o.date) / 3600000 > cfg.p2pMaxHours : dayKey(t.date) !== dayKey(o.date)) continue;
+      if (!nearOrder(t, o, cfg)) continue;
       candidates.push({ o, t, nick: nicknameMatches(o.counterparty, t.tokens) });
     }
   }
@@ -123,13 +124,28 @@ function matchP2P(bank, p2p, cfg) {
 
   const matches = [];
   const usedOrders = new Set();
+  const record = (o, txs, how) => {
+    usedOrders.add(o.id);
+    for (const t of txs) {
+      t.excluded = 'P2P';
+      t.estDate = o.date;
+    }
+    matches.push({
+      order: o.id,
+      orderRef: `${o.sheet}!B${o.row}`,
+      side: o.side,
+      currency: o.currency,
+      amount: o.amount,
+      contraparte: o.counterparty,
+      bank: txs.map(t => t.id).join('+'),
+      banks: txs.map(t => t.id),
+      como: how
+    });
+  };
   const take = list => {
     for (const c of list) {
       if (usedOrders.has(c.o.id) || c.t.excluded) continue;
-      usedOrders.add(c.o.id);
-      c.t.excluded = 'P2P';
-      c.t.estDate = c.o.date;
-      matches.push({ order: c.o.id, orderRef: `${c.o.sheet}!B${c.o.row}`, side: c.o.side, currency: c.o.currency, amount: c.o.amount, contraparte: c.o.counterparty, bank: c.t.id });
+      record(c.o, [c.t], c.nick ? 'valor exacto + apodo' : 'valor exacto');
     }
   };
 
@@ -149,7 +165,56 @@ function matchP2P(bank, p2p, cfg) {
   const estHours = c => (c.t.estDate ? Math.abs(c.t.estDate - c.o.date) / 3600000 : cfg.p2pMaxHours);
   take(rest.filter(c => estHours(c) <= cfg.p2pMaxHours).sort((a, b) => estHours(a) - estHours(b) || a.t.row - b.t.row));
 
+  // d) pago partido: 2 a 4 transferências para/da mesma pessoa que somam o valor da ordem
+  //    (ex.: 16.543,69 Bs = 3 × 5.514,56 por causa do limite por transferência)
+  for (const o of p2p) {
+    if (usedOrders.has(o.id)) continue;
+    const split = splitPayment(o, bank, cfg);
+    if (split) record(o, split, `suma de ${split.length} transferencias`);
+  }
+
   return matches;
+}
+
+// Lançamento perto o bastante da ordem: com hora, até p2pMaxHours; sem hora, no mesmo dia ou,
+// para ordens da noite, no dia seguinte
+function nearOrder(t, o, cfg) {
+  if (t.hasTime) return Math.abs(t.date - o.date) / 3600000 <= cfg.p2pMaxHours;
+  const days = dayDiff(dayKey(o.date), dayKey(t.date));
+  return days === 0 || (days === 1 && o.date.getUTCHours() >= cfg.lateHour);
+}
+
+function splitPayment(o, bank, cfg) {
+  const sign = o.side === 'Compra' ? -1 : 1;
+  const near = t => nearOrder(t, o, cfg);
+  const groups = new Map();
+  for (const t of bank) {
+    if (t.excluded || t.currency !== o.currency || Math.sign(t.amount) !== sign || !t.tokens.length || !near(t)) continue;
+    if (Math.abs(t.amount) >= o.amount) continue;
+    const key = `${t.sheet}|${[...t.tokens].sort().join(' ')}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(t);
+  }
+  let best = null;
+  for (const txs of groups.values()) {
+    txs.sort((a, b) => a.date - b.date || a.row - b.row);
+    // Transferências seguidas (em sequência no extrato), como acontece quando o valor é partido
+    for (let i = 0; i < txs.length; i++) {
+      let sum = 0;
+      for (let j = i; j < Math.min(txs.length, i + 4); j++) {
+        sum += Math.abs(txs[j].amount);
+        if (j > i && Math.abs(sum - o.amount) <= 0.01) {
+          const part = txs.slice(i, j + 1);
+          // Sem hora (FIDU/PICPAY), só linhas vizinhas no extrato: 50 + 50 longe uma da outra é coincidência
+          if (!part[0].hasTime && part.at(-1).row - part[0].row > part.length + 1) continue;
+          const gap = Math.abs((part[0].hasTime ? part[0].date : o.date) - o.date);
+          if (!best || gap < best.gap) best = { part, gap };
+        }
+        if (sum > o.amount + 0.01) break;
+      }
+    }
+  }
+  return best?.part || null;
 }
 
 // Hora aproximada das linhas sem hora, interpolando entre as âncoras P2P do mesmo extrato e dia
@@ -462,8 +527,10 @@ function reconcile({ bank, p2p, linked = new Map(), history = {} }, options = {}
   const cfg = { ...DEFAULTS, ...options, margin: { ...DEFAULTS.margin, ...options.margin } };
   const txs = bank.map(t => ({ ...t, tokens: nameTokens(t.counterparty), excluded: null }));
 
-  const p2pMatches = markExcluded(txs, p2p, linked, cfg);
-  const priceOf = buildPrices(p2p, history, cfg);
+  // Ordens canceladas ficam só para a validação (não movem dinheiro nem dão cotação)
+  const done = p2p.filter(o => (o.status || 'Completado') === 'Completado');
+  const p2pMatches = markExcluded(txs, done, linked, cfg);
+  const priceOf = buildPrices(done, history, cfg);
   const open = txs.filter(t => !t.excluded);
   const idf = buildIdf(open);
 
@@ -508,4 +575,4 @@ function reconcile({ bank, p2p, linked = new Map(), history = {} }, options = {}
   };
 }
 
-module.exports = { reconcile, nameTokens, DEFAULTS };
+module.exports = { reconcile, nameTokens, nicknameMatches, DEFAULTS };

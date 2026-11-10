@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const { parseFiles } = require('./conciliacion.sources');
 const { reconcile } = require('./conciliacion.matcher');
+const { validate } = require('./conciliacion.validacion');
 const { buildWorkbook } = require('./conciliacion.workbook');
 const prices = require('./conciliacion.prices');
 
@@ -32,7 +33,9 @@ function toTsv(cambios) {
 // POST /api/conciliacion?todos=1&formato=json|tsv|xlsx&desde=2026-10-01&hasta=2026-10-04
 //   (multipart, campo "arquivos", vários arquivos)
 // Arquivos aceitos, em qualquer combinação:
-//   - extratos crus: Banco Económico (.xlsx), PicPay (.csv)
+//   - extratos crus: Banco Económico (.xlsx), PicPay (.csv/.xlsx), Fiducia (.xlsx)
+//   - ordens P2P: histórico da Bybit (.xls) e C2C da Binance (.xlsx) → aba "Validación P2P"
+//     (cada ordem contra o extrato e contra a cotação do mercado)
 //   - cotações (.txt de /historico); sem ele, usa o histórico gravado no banco
 //   Dias sem cotação própria usam a cotação manual da tabela cotacoes_manuais (ver /cotacoes abaixo)
 //   - o "Relatorio de lucro" (.xlsx): abas que não vieram cruas (FIDU, BYBIT, BNB) e o que já está ligado
@@ -42,7 +45,8 @@ function toTsv(cambios) {
 //   formato=tsv  → só as linhas para colar na aba Cambios
 // Nada é gravado: os arquivos são lidos em memória e descartados.
 router.post('/', upload.any(), async (req, res) => {
-  const files = (req.files || []).map(f => ({ name: f.originalname, buffer: f.buffer }));
+  // O multer entrega o nome em latin1; "Histórico" chegaria como "HistoÌrico"
+  const files = (req.files || []).map(f => ({ name: Buffer.from(f.originalname, 'latin1').toString('utf8'), buffer: f.buffer }));
   if (!files.length) {
     return res.status(400).json({ success: false, message: 'Envie os arquivos no campo "arquivos" (multipart/form-data)' });
   }
@@ -54,17 +58,21 @@ router.post('/', upload.any(), async (req, res) => {
       period[key] = req.query[key];
     }
     const parsed = await parseFiles(files, period);
-    const { history, manualPrices } = await prices.loadDbPrices(parsed);
-    parsed.history = history;
-    const result = reconcile(parsed, { useLinked: req.query.todos !== '1', manualPrices });
-    console.log(`🔗 Conciliação: ${result.resumen.cambios} câmbios sugeridos, ${result.resumen.pendientes} pendentes`);
+    const { history, market, manualPrices } = await prices.loadDbPrices(parsed);
+    Object.assign(parsed, { history, market });
+    const useLinked = req.query.todos !== '1';
+    const result = reconcile(parsed, { useLinked, manualPrices });
+    result.validacion = validate(parsed, result, { useLinked });
+    result.resumen.validacion = result.validacion.resumen;
+    console.log(`🔗 Conciliação: ${result.resumen.cambios} câmbios sugeridos, ${result.resumen.pendientes} pendentes, ${result.validacion.resumen.ordenes} ordens P2P validadas`);
 
     if (req.query.formato === 'tsv') {
       res.setHeader('Content-Type', 'text/tab-separated-values; charset=utf-8');
       return res.send(toTsv(result.cambios));
     }
     if (req.query.formato === 'xlsx') {
-      const days = parsed.bank.map(t => t.date.toISOString().slice(0, 10)).sort();
+      const dated = parsed.bank.length ? parsed.bank : parsed.p2p;
+      const days = dated.map(t => t.date.toISOString().slice(0, 10)).sort();
       const name = days.length ? `relatorio_conciliado_${days[0]}_a_${days.at(-1)}.xlsx` : 'relatorio_conciliado.xlsx';
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
