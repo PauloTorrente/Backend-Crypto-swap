@@ -7,7 +7,9 @@ const BANKS = {
   ECOPF: { currency: 'BOB', date: 'Fecha y hora', amount: 'Monto (Bs)', type: 'Transacción', counterparty: 'Nota / Contraparte' },
   ECOPJ: { currency: 'BOB', date: 'Fecha y hora', amount: 'Monto (Bs)', type: 'Transacción', counterparty: 'Nota / Contraparte' },
   FIDU: { currency: 'BRL', date: 'Data', amount: 'Valor (R$)', type: 'Tipo', counterparty: 'Contraparte' },
-  PICPAY: { currency: 'BRL', date: 'Data', amount: 'Valor (BRL)', type: 'Movimento', counterparty: 'Descrição' }
+  PICPAY: { currency: 'BRL', date: 'Data', amount: 'Valor (BRL)', type: 'Movimento', counterparty: 'Descrição' },
+  // Stone (Joao Soluções, R$): tem data e hora de cada Pix
+  STONE: { currency: 'BRL', date: 'Data', amount: 'Valor (R$)', type: 'Tipo', counterparty: 'Contraparte' }
 };
 
 // Ordens P2P: dão a cotação do USDT do dia e explicam lançamentos que não são câmbio.

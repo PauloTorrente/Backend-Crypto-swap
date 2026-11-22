@@ -1,5 +1,13 @@
+const dns = require('dns');
+const net = require('net');
 const { Sequelize } = require('sequelize');
 require('dotenv').config();
+
+// O host do Neon tem endereços IPv4 e IPv6. Em rede sem IPv6, o Node tenta todos com só 250 ms
+// por tentativa e, se o IPv4 demora um pouco mais, desiste de todos (ETIMEDOUT). IPv4 primeiro
+// e mais tempo por tentativa resolvem.
+dns.setDefaultResultOrder('ipv4first');
+net.setDefaultAutoSelectFamilyAttemptTimeout(2000);
 
 // Sem DATABASE_URL no .env, usa uma URL fictícia só para o servidor subir.
 // O Sequelize só conecta na primeira query, então as rotas que usam o banco vão falhar.
