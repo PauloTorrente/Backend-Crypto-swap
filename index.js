@@ -5,12 +5,14 @@ const app = express();
 const db = require('./config/database'); // Certifique-se que isso exporta uma instância do Sequelize
 const router = require('./api/router');
 const exchangeService = require('./api/exchange/exchange.service');
+const telegram = require('./services/telegram.service'); // define a tabela telegram_subscribers antes do sync
 const PORT = process.env.PORT || 3000;
 
 // ✅ Libera requisições de qualquer origem (útil para desenvolvimento local)
 app.use(cors({ exposedHeaders: ['Content-Disposition', 'X-Conciliacion-Resumen'] })); // nome do arquivo e resumo da conciliação para o front
 
-app.use(express.json()); 
+// rawBody: guarda o corpo original para validar a assinatura do webhook da GOWD
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use('/api', router); 
 
 // Página para baixar o histórico de cotações em .txt
@@ -69,6 +71,7 @@ async function start() {
   app.listen(PORT, () => {
     console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
     logPairRates();
+    telegram.setup();
     setInterval(logPairRates, RATES_LOG_INTERVAL_MS);
   });
 }
