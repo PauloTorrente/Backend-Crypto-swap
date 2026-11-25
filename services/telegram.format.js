@@ -100,14 +100,32 @@ const STATUS_LABEL = {
 const STATUS_EMOJI = { PAID: '✅', SCHEDULED: '🕒', EXPIRED: '⌛', CANCELED: '🚫', ERROR: '❌' };
 
 // ------------------------------------------------------------------ mensagens
-// Postbacks da GOWD (ORDER-PAYIN.* / ORDER-PAYOUT.* / LOAD)
+// Classifica o aviso da GOWD: 'out' (enviado), 'in' (recebido) ou null (outro tipo de evento).
+// A GOWD nem sempre manda "event": um Pix enviado pelo painel chega como type "TRANSFER"
+// só com ownerBank/receiver.
+function gowdDirection(p) {
+  const event = String(p.event || '');
+  const type = String(p.type || '');
+  if (event.includes('PAYOUT') || ['PAY-OUT', 'PAYOUT', 'TRANSFER'].includes(type)) return 'out';
+  if (event.includes('PAYIN') || ['PAY-IN', 'PAYIN', 'LOAD'].includes(type)) return 'in';
+  if (p.receiver && !p.payer) return 'out';
+  if (p.payer) return 'in';
+  return null;
+}
+
+const pixKeyOf = (person) => {
+  const pix = (person && person.bank && person.bank.pix) || {};
+  return pix.key ? `${pix.type ? pix.type + ' ' : ''}${pix.key}` : null;
+};
+
+// Postbacks da GOWD (ORDER-PAYIN.* / ORDER-PAYOUT.* / LOAD / TRANSFER)
 function gowdEvent(p) {
   const event = p.event || '';
   const status = p.status || '';
   const amount = p.amount || {};
   const valor = fmtMoney(amount.value, amount.currency || 'BRL');
   const method = str(p.paymentMethod);
-  const saida = event.includes('PAYOUT') || p.type === 'PAY-OUT';
+  const saida = gowdDirection(p) === 'out';
   const who = (saida ? p.receiver : p.payer) || {};
 
   const header = saida
@@ -119,9 +137,9 @@ function gowdEvent(p) {
     [saida ? 'Para' : 'De', who.name],
     ['Doc', docOf(who)],
     ['Banco', bankOf(who)],
-    ['Metodo', method],
-    ['Data', fmtDate(p.paidAt || p.updatedAt)],
   ];
+  if (pixKeyOf(who)) list.push(['Chave', pixKeyOf(who)]);
+  list.push(['Metodo', method], ['Data', fmtDate(p.paidAt || p.updatedAt)]);
   if (saida && status === 'SCHEDULED' && p.scheduledAt) list.push(['Agenda', fmtDate(p.scheduledAt)]);
   if (p.description) list.push(['Descr.', p.description]);
   if (status === 'ERROR' && p.message) list.push(['Erro', p.message]);
@@ -130,7 +148,7 @@ function gowdEvent(p) {
     header,
     [`${saida ? '-' : '+'} ${valor}`, STATUS_LABEL[status] || status],
     list,
-    event ? [event] : null
+    [event || p.type].filter(Boolean)
   );
   const extra = p.endToEndId ? `🔑 E2E: <code>${escapeHtml(p.endToEndId)}</code>` : '';
   return wrapPre(title, art, extra);
@@ -177,4 +195,19 @@ function startup() {
   return wrapPre('🤖 <b>Bot iniciado</b>', art);
 }
 
-module.exports = { escapeHtml, gowdEvent, loginAttempt, accessGranted, startup };
+// Outros eventos (KYC, ACCOUNT, ...): cartão genérico em vez de JSON cru
+function gowdOther(p) {
+  const name = String(p.event || p.type || 'EVENTO');
+  const list = [
+    ['Status', p.status],
+    ['Data', fmtDate(p.updatedAt || p.createdAt)],
+  ];
+  if (p.message) list.push(['Msg', p.message]);
+  if (p.id) list.push(['ID', p.id]);
+  return wrapPre(
+    `ℹ️ <b>Evento GOWD: ${escapeHtml(name)}</b>`,
+    card(['[i]  AVISO DA GOWD  [i]'], [name], list)
+  );
+}
+
+module.exports = { escapeHtml, gowdDirection, gowdEvent, gowdOther, loginAttempt, accessGranted, startup };

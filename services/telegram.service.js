@@ -71,14 +71,9 @@ async function broadcast(text) {
 const notifyLogin = (data) => broadcast(fmt.loginAttempt({ ...data, timestamp: new Date().toISOString() }));
 
 function notifyGowdEvent(p) {
-  const event = String(p.event || '');
-  if (event.includes('PAYIN') || event.includes('PAYOUT') || ['LOAD', 'PAY-IN', 'PAY-OUT'].includes(p.type)) {
-    return broadcast(fmt.gowdEvent(p));
-  }
-  const resumo = JSON.stringify(p, null, 1).slice(0, 3500);
-  return broadcast(
-    `ℹ️ <b>Evento GOWD:</b> ${fmt.escapeHtml(event || p.type)}\n<pre>${fmt.escapeHtml(resumo)}</pre>`
-  );
+  if (fmt.gowdDirection(p)) return broadcast(fmt.gowdEvent(p));
+  console.log('ℹ️ GOWD evento não-Pix:', JSON.stringify(p).slice(0, 1000)); // payload completo fica no log
+  return broadcast(fmt.gowdOther(p));
 }
 
 // ----------------------------------------------------------------- comandos
