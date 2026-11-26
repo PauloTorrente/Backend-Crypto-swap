@@ -1,11 +1,12 @@
 // Bot do Telegram: notificações de login e transferências (GOWD), com acesso por senha.
 //
 // Acesso:  /start SENHA  (ou /start(SENHA))  -> passa a receber os avisos
-//          /status  /stop
+//          /cambio [valor]  /saldo  /pix  /status  /stop
 //
 // .env:
 //   TELEGRAM_BOT_TOKEN      token do @BotFather
 //   BOT_ACCESS_PASSWORD     senha do /start
+//   (saldo: ver services/gowd.service.js)
 //   TELEGRAM_CHAT_IDS       (opcional) chats fixos que sempre recebem, separados por vírgula
 //   PUBLIC_URL              (opcional) URL pública do backend; no Render usa RENDER_EXTERNAL_URL
 //
@@ -14,6 +15,9 @@ const crypto = require('crypto');
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 const fmt = require('./telegram.format');
+const gowd = require('./gowd.service');
+const pix = require('./telegram.pix');
+const exchange = require('../api/exchange/exchange.service');
 
 const Subscriber = require('../api/telegram/telegram.model')(sequelize, DataTypes);
 
@@ -92,6 +96,12 @@ function samePassword(a, b) {
 }
 
 async function handleUpdate(update) {
+  if (update && update.callback_query) {
+    const cb = update.callback_query;
+    if (!cb.message || !String(cb.data || '').startsWith('pix:')) return;
+    const isSubscriber = Boolean(await Subscriber.findByPk(String(cb.message.chat.id)));
+    return pix.handlePixCallback({ cb, isSubscriber, api, broadcast });
+  }
   const msg = update && update.message;
   if (!msg || !msg.text || !msg.chat) return;
   const chatId = String(msg.chat.id);
@@ -137,12 +147,34 @@ async function handleUpdate(update) {
     await sub.destroy();
     return reply('🔕 Você não vai mais receber notificações. /start SENHA para voltar.');
   }
+  if (text.startsWith('/saldo')) {
+    if (!gowd.configured()) return reply('⚠️ Consulta de saldo não configurada no servidor (credenciais GOWD).');
+    try {
+      return reply(fmt.balance(await gowd.getBalances()));
+    } catch (err) {
+      console.error('⚠️ GOWD saldo:', err.message);
+      return reply('❌ Não consegui consultar o saldo agora. Tente de novo em instantes.');
+    }
+  }
+  if (text.startsWith('/cambio')) {
+    try {
+      const amount = pix.parseAmount(text.split(/\s+/)[1]);
+      const [pairs, usdt] = await Promise.all([exchange.getPairRates(), exchange.getUsdtPrices()]);
+      return reply(fmt.cambio(pairs, usdt, amount));
+    } catch (err) {
+      console.error('⚠️ /cambio:', err.message);
+      return reply('❌ Não consegui buscar as cotações agora. Tente de novo em instantes.');
+    }
+  }
+  if (text.startsWith('/pix')) {
+    return pix.handlePixCommand({ chatId, name, text, api, sendTo });
+  }
   if (text.startsWith('/status')) {
     const total = await Subscriber.count();
     const since = sub.createdAt.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
     return reply(`✅ Cadastrado desde ${fmt.escapeHtml(since)}.\n👥 Inscritos: ${total}`);
   }
-  return reply('Comandos: /status · /stop');
+  return reply('Comandos: /cambio · /saldo · /pix · /status · /stop');
 }
 
 // Registra o webhook no Telegram ao subir o servidor
@@ -158,11 +190,14 @@ async function setup() {
       await api('setWebhook', {
         url: `${base.replace(/\/$/, '')}/api/telegram/webhook`,
         secret_token: WEBHOOK_SECRET,
-        allowed_updates: ['message'],
+        allowed_updates: ['message', 'callback_query'],
       });
       await api('setMyCommands', {
         commands: [
           { command: 'start', description: 'Ativar notificações (com senha)' },
+          { command: 'cambio', description: 'Cotação BOB/BRL (ex: /cambio 1000)' },
+          { command: 'saldo', description: 'Saldo da conta GOWD' },
+          { command: 'pix', description: 'Enviar Pix: /pix CHAVE VALOR' },
           { command: 'status', description: 'Ver se está cadastrado' },
           { command: 'stop', description: 'Parar notificações' },
         ],

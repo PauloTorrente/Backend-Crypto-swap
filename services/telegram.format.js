@@ -96,8 +96,11 @@ const STATUS_LABEL = {
   EXPIRED: '[ -- ] EXPIRADO',
   CANCELED: '[ XX ] CANCELADO',
   ERROR: '[ !! ] ERRO',
+  ANALYSIS: '[ ?? ] EM ANALISE',
+  PENDING: '[ .. ] PROCESSANDO',
+  INITIAL: '[ .. ] PROCESSANDO',
 };
-const STATUS_EMOJI = { PAID: '✅', SCHEDULED: '🕒', EXPIRED: '⌛', CANCELED: '🚫', ERROR: '❌' };
+const STATUS_EMOJI = { PAID: '✅', SCHEDULED: '🕒', EXPIRED: '⌛', CANCELED: '🚫', ERROR: '❌', ANALYSIS: '🔎', PENDING: '⏳', INITIAL: '⏳' };
 
 // ------------------------------------------------------------------ mensagens
 // Classifica o aviso da GOWD: 'out' (enviado), 'in' (recebido) ou null (outro tipo de evento).
@@ -150,8 +153,12 @@ function gowdEvent(p) {
     list,
     [event || p.type].filter(Boolean)
   );
-  const extra = p.endToEndId ? `🔑 E2E: <code>${escapeHtml(p.endToEndId)}</code>` : '';
-  return wrapPre(title, art, extra);
+  const extras = [];
+  if (p.endToEndId) extras.push(`🔑 E2E: <code>${escapeHtml(p.endToEndId)}</code>`);
+  if (status === 'ANALYSIS') {
+    extras.push('⚠️ <b>Pix retido pela GOWD para análise.</b> Aprove no Internet Banking da GOWD com o código enviado por e-mail (prazo: 24h).');
+  }
+  return wrapPre(title, art, extras.join('\n'));
 }
 
 function loginAttempt(d) {
@@ -210,4 +217,98 @@ function gowdOther(p) {
   );
 }
 
-module.exports = { escapeHtml, gowdDirection, gowdEvent, gowdOther, loginAttempt, accessGranted, startup };
+// /saldo: { PAYMENT: {balance, provisioned} | {error}, ADMINISTRATIVE: ... }
+function balance(b) {
+  const money = (x) => (x && x.value !== undefined ? fmtMoney(x.value, x.currency || 'BRL') : 'indisponivel');
+  const pay = b.PAYMENT || {};
+  const adm = b.ADMINISTRATIVE || {};
+  const list = [];
+  if (adm.error) list.push(['Admin.', 'erro ao consultar']);
+  else {
+    list.push(['Admin.', money(adm.balance)]);
+    if (adm.provisioned && Number(adm.provisioned.value)) list.push(['A comp.', money(adm.provisioned)]);
+  }
+  list.push(['Data', fmtDate()]);
+  const art = card(
+    ['$$$   SALDO  DA  CONTA   $$$', 'G O W D'],
+    pay.error ? ['erro ao consultar'] : [money(pay.balance), 'CONTA PAGAMENTO'],
+    list
+  );
+  return wrapPre('🏦 <b>Saldo GOWD</b>', art);
+}
+
+// ------------------------------------------------------------------ /pix
+const KEY_LABEL = { CPF: 'CPF', CNPJ: 'CNPJ', EMAIL: 'E-mail', PHONE: 'Celular', RANDOM: 'Aleatoria' };
+
+function pixConfirm(o, minutes) {
+  const art = card(
+    ['>>> CONFIRMAR ENVIO PIX >>>'],
+    [`- ${fmtMoney(o.amount)}`, '[ ?? ] AGUARDANDO OK'],
+    [
+      ['Chave', o.pix_key],
+      ['Tipo', KEY_LABEL[o.key_type] || o.key_type],
+      ['Descr.', o.description],
+      ['Pedido', o.requested_by],
+    ],
+    [`expira em ${minutes} min`]
+  );
+  return wrapPre('💸 <b>Confirmar Pix?</b>', art, 'Confira a chave e o valor. O nome do destinatário aparece no aviso da GOWD após o envio.');
+}
+
+const RESULT = {
+  SENDING: ['⏳ <b>Enviando Pix...</b>', '[ .. ] ENVIANDO'],
+  SENT: ['✅ <b>Pix enviado para a GOWD</b>', '[ OK ] SOLICITADO'],
+  FAILED: ['❌ <b>Pix NÃO enviado</b>', '[ !! ] FALHOU'],
+  CANCELED: ['🚫 <b>Pix cancelado</b>', '[ XX ] CANCELADO'],
+  EXPIRED: ['⌛ <b>Confirmação expirada</b>', '[ -- ] EXPIRADO'],
+};
+
+function pixResult(o, state, r = {}) {
+  const [title, label] = RESULT[state] || RESULT.FAILED;
+  const list = [
+    ['Chave', o.pix_key],
+    ['Tipo', KEY_LABEL[o.key_type] || o.key_type],
+    ['Descr.', o.description],
+  ];
+  if (r.status) list.push(['GOWD', STATUS_LABEL[r.status] || r.status]);
+  if (r.errorMessage) list.push(['Erro', r.errorMessage]);
+  list.push(['Data', fmtDate()]);
+  let extra = '';
+  if (state === 'SENT') extra = 'O comprovante chega como aviso <b>PIX ENVIADO</b> quando a GOWD concluir.';
+  if (r.status === 'ANALYSIS') extra = '⚠️ Retido para análise: aprove no Internet Banking da GOWD (código por e-mail, prazo 24h).';
+  return wrapPre(title, card(['>>>   ENVIO PIX (BOT)   >>>'], [`- ${fmtMoney(o.amount)}`, label], list), extra);
+}
+
+// ---------------------------------------------------------------- /cambio
+// pairs: { bob_per_brl, margin, BOB_BRL, BRL_BOB } | usdt: { BRL: {mid, sources}, BOB: {...} }
+function cambio(pairs, usdt, amount) {
+  const n = (v, d = 4) => Number(v).toFixed(d);
+  const list = [
+    ['BOB->BRL', n(pairs.BOB_BRL)],
+    ['BRL->BOB', n(pairs.BRL_BOB)],
+  ];
+  if (amount > 0) {
+    const br = (v) => Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    list.push(['Simul.', `${br(amount)} BRL = ${br(amount * pairs.BRL_BOB)} BOB`]);
+    list.push(['Simul.', `${br(amount)} BOB = ${br(amount / pairs.BOB_BRL)} BRL`]);
+  }
+  const footer = [];
+  for (const [cur, label] of [['BRL', 'USDT/BRL spot'], ['BOB', 'USDT/BOB p2p']]) {
+    const u = usdt[cur];
+    if (!u) continue;
+    footer.push(`${label}: ${n(u.mid)}`);
+    for (const s of u.sources || []) footer.push(`${s.exchange} ${n(s.buy)}/${n(s.sell)}`);
+  }
+  const art = card(
+    ['$$$   CAMBIO  BOB/BRL   $$$'],
+    [`BOB/BRL ${n(pairs.bob_per_brl)}`, `margem ${n(pairs.margin, 3)}`],
+    [...list, ['Data', fmtDate()]],
+    footer
+  );
+  const line =
+    `BOB/BRL ${n(pairs.bob_per_brl)} | BOB→BRL ${n(pairs.BOB_BRL)} | ` +
+    `BRL→BOB ${n(pairs.BRL_BOB)} (margem ${n(pairs.margin, 3)})`;
+  return wrapPre('💱 <b>Câmbio BOB/BRL</b>', art, `<code>${escapeHtml(line)}</code>`);
+}
+
+module.exports = { cambio, money: fmtMoney, pixConfirm, pixResult, escapeHtml, gowdDirection, gowdEvent, gowdOther, balance, loginAttempt, accessGranted, startup };
