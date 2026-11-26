@@ -104,8 +104,8 @@ async function getBalances() {
 
 // Envia um Pix por chave (PUT /order/v3/payout/brazil). A GOWD resolve o dono da chave no DICT.
 // `code` é o nosso id do pedido e também vai como idempotency-key: repetir a chamada não duplica o Pix.
-// keyType: CPF | CNPJ | EMAIL | PHONE | RANDOM. amount: número em reais.
-async function createPixPayout({ code, key, keyType, amount, description }) {
+// keyType: CPF | CNPJ | EMAIL | PHONE | RANDOM, ou qrcodeData (Pix copia e cola). amount: número em reais.
+async function createPixPayout({ code, key, keyType, qrcodeData, amount, description }) {
   if (!configured()) throw new Error('GOWD não configurada');
   const base = process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '';
   const body = {
@@ -114,7 +114,7 @@ async function createPixPayout({ code, key, keyType, amount, description }) {
     paymentMethod: 'PIX',
     description: description || 'Pix via bot',
     webhookUrl: `${base.replace(/\/$/, '')}/api/webhooks/gowd`,
-    bank: { pix: { type: keyType, key } },
+    bank: { pix: qrcodeData ? { qrcodeData } : { type: keyType, key } },
   };
   const r = await request('PUT', '/order/v3/payout/brazil', {
     body,

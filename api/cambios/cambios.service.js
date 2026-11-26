@@ -140,4 +140,4 @@ async function retrySync(id) {
   return withProfit(await syncToSheet(record));
 }
 
-module.exports = { list, create, update, retrySync, sheetsConfigured: sheets.isConfigured };
+module.exports = { list, create, update, retrySync, withProfit, sheetsConfigured: sheets.isConfigured };

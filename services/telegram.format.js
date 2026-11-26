@@ -238,13 +238,19 @@ function balance(b) {
 }
 
 // ------------------------------------------------------------------ /pix
-const KEY_LABEL = { CPF: 'CPF', CNPJ: 'CNPJ', EMAIL: 'E-mail', PHONE: 'Celular', RANDOM: 'Aleatoria' };
+const KEY_LABEL = { CPF: 'CPF', CNPJ: 'CNPJ', EMAIL: 'E-mail', PHONE: 'Celular', RANDOM: 'Aleatoria', QRCODE: 'Copia e cola' };
+
+const receiverRows = (o) => [
+  ...(o.receiver_name ? [['Para', o.receiver_name]] : []),
+  ...(o.receiver_city ? [['Cidade', o.receiver_city]] : []),
+];
 
 function pixConfirm(o, minutes) {
   const art = card(
     ['>>> CONFIRMAR ENVIO PIX >>>'],
     [`- ${fmtMoney(o.amount)}`, '[ ?? ] AGUARDANDO OK'],
     [
+      ...receiverRows(o),
       ['Chave', o.pix_key],
       ['Tipo', KEY_LABEL[o.key_type] || o.key_type],
       ['Descr.', o.description],
@@ -252,7 +258,10 @@ function pixConfirm(o, minutes) {
     ],
     [`expira em ${minutes} min`]
   );
-  return wrapPre('💸 <b>Confirmar Pix?</b>', art, 'Confira a chave e o valor. O nome do destinatário aparece no aviso da GOWD após o envio.');
+  const tip = o.receiver_name
+    ? 'Confira o recebedor e o valor (lidos do Pix copia e cola).'
+    : 'Confira a chave e o valor. O nome do destinatário aparece no aviso da GOWD após o envio.';
+  return wrapPre('💸 <b>Confirmar Pix?</b>', art, tip);
 }
 
 const RESULT = {
@@ -266,6 +275,7 @@ const RESULT = {
 function pixResult(o, state, r = {}) {
   const [title, label] = RESULT[state] || RESULT.FAILED;
   const list = [
+    ...receiverRows(o),
     ['Chave', o.pix_key],
     ['Tipo', KEY_LABEL[o.key_type] || o.key_type],
     ['Descr.', o.description],
@@ -311,4 +321,30 @@ function cambio(pairs, usdt, amount) {
   return wrapPre('💱 <b>Câmbio BOB/BRL</b>', art, `<code>${escapeHtml(line)}</code>`);
 }
 
-module.exports = { cambio, money: fmtMoney, pixConfirm, pixResult, escapeHtml, gowdDirection, gowdEvent, gowdOther, balance, loginAttempt, accessGranted, startup };
+// ----------------------------------------------------------------- /lucro
+// r = resultado do withProfit (cambios.service), com os preços USDT de agora
+function lucro(r) {
+  const br = (v, d = 2) => Number(v).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const cur = (v, c) => (c === 'BRL' ? `R$ ${br(v)}` : `Bs ${br(v)}`);
+  const ganho = r.profit_usdt >= 0;
+  const art = card(
+    ['$$$  SIMULACAO DE LUCRO  $$$'],
+    [`${ganho ? '+' : '-'} R$ ${br(Math.abs(r.profit_brl))}`, `${br(r.profit_usdt, 2)} USDT | ${br(r.margin * 100, 2)}%`],
+    [
+      ['Recebe', cur(r.amount_received, r.currency_received)],
+      ['  =USDT', br(r.received_usdt, 2)],
+      ['Entrega', cur(r.amount_delivered, r.currency_delivered)],
+      ['  =USDT', br(r.delivered_usdt, 2)],
+      ['Mercado', cur(r.market_delivery, r.currency_delivered)],
+      ['Data', fmtDate()],
+    ],
+    [
+      `USDT/BRL ${Number(r.currency_received === 'BRL' ? r.usdt_price_received : r.usdt_price_delivered).toFixed(4)}`,
+      `USDT/BOB ${Number(r.currency_received === 'BOB' ? r.usdt_price_received : r.usdt_price_delivered).toFixed(4)}`,
+    ]
+  );
+  const title = ganho ? '📈 <b>Lucro do câmbio</b>' : '📉 <b>PREJUÍZO no câmbio</b>';
+  return wrapPre(title, art, '<i>Simulação com o preço do USDT de agora. Nada foi registrado.</i>');
+}
+
+module.exports = { lucro, cambio, money: fmtMoney, pixConfirm, pixResult, escapeHtml, gowdDirection, gowdEvent, gowdOther, balance, loginAttempt, accessGranted, startup };

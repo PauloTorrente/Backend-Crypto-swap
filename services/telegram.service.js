@@ -1,7 +1,7 @@
 // Bot do Telegram: notificações de login e transferências (GOWD), com acesso por senha.
 //
 // Acesso:  /start SENHA  (ou /start(SENHA))  -> passa a receber os avisos
-//          /cambio [valor]  /saldo  /pix  /status  /stop
+//          /cambio [valor]  /lucro  /saldo  /pix  /status  /stop
 //
 // .env:
 //   TELEGRAM_BOT_TOKEN      token do @BotFather
@@ -18,6 +18,7 @@ const fmt = require('./telegram.format');
 const gowd = require('./gowd.service');
 const pix = require('./telegram.pix');
 const exchange = require('../api/exchange/exchange.service');
+const cambios = require('../api/cambios/cambios.service');
 
 const Subscriber = require('../api/telegram/telegram.model')(sequelize, DataTypes);
 
@@ -156,6 +157,36 @@ async function handleUpdate(update) {
       return reply('❌ Não consegui consultar o saldo agora. Tente de novo em instantes.');
     }
   }
+  if (text.startsWith('/lucro')) {
+    // /lucro 1000 BOB 470  -> cliente manda 1000 BOB, eu entrego 470 BRL
+    const m = text.slice(6).match(/([\d.,]+)\s*(bob|brl|bs|r\$)\s+(?:r\$|bs)?\s*([\d.,]+)/i);
+    const received = m && pix.parseAmount(m[1]);
+    const delivered = m && pix.parseAmount(m[3]);
+    if (!m || !(received > 0) || !(delivered > 0)) {
+      return reply(
+        '📈 <b>Simular lucro</b>\n\n<code>/lucro RECEBIDO MOEDA ENTREGUE</code>\n\n' +
+          'Cliente manda 1000 bolivianos e eu entrego 470 reais:\n<code>/lucro 1000 BOB 470</code>\n\n' +
+          'Cliente manda 500 reais e eu entrego 1020 bolivianos:\n<code>/lucro 500 BRL 1020</code>'
+      );
+    }
+    const currency = /^(bob|bs)$/i.test(m[2]) ? 'BOB' : 'BRL';
+    const other = currency === 'BOB' ? 'BRL' : 'BOB';
+    try {
+      const prices = await exchange.getUsdtPrices();
+      const r = cambios.withProfit({
+        currency_received: currency,
+        amount_received: received,
+        currency_delivered: other,
+        amount_delivered: delivered,
+        usdt_price_received: prices[currency].mid,
+        usdt_price_delivered: prices[other].mid,
+      });
+      return reply(fmt.lucro(r));
+    } catch (err) {
+      console.error('⚠️ /lucro:', err.message);
+      return reply('❌ Não consegui buscar as cotações agora. Tente de novo em instantes.');
+    }
+  }
   if (text.startsWith('/cambio')) {
     try {
       const amount = pix.parseAmount(text.split(/\s+/)[1]);
@@ -166,7 +197,8 @@ async function handleUpdate(update) {
       return reply('❌ Não consegui buscar as cotações agora. Tente de novo em instantes.');
     }
   }
-  if (text.startsWith('/pix')) {
+  // /pix, ou um Pix copia e cola colado direto (começa com 000201)
+  if (text.startsWith('/pix') || /^000201\S*.*6304[0-9A-Fa-f]{4}/s.test(text)) {
     return pix.handlePixCommand({ chatId, name, text, api, sendTo });
   }
   if (text.startsWith('/status')) {
@@ -174,7 +206,7 @@ async function handleUpdate(update) {
     const since = sub.createdAt.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
     return reply(`✅ Cadastrado desde ${fmt.escapeHtml(since)}.\n👥 Inscritos: ${total}`);
   }
-  return reply('Comandos: /cambio · /saldo · /pix · /status · /stop');
+  return reply('Comandos: /cambio · /lucro · /saldo · /pix · /status · /stop');
 }
 
 // Registra o webhook no Telegram ao subir o servidor
@@ -196,6 +228,7 @@ async function setup() {
         commands: [
           { command: 'start', description: 'Ativar notificações (com senha)' },
           { command: 'cambio', description: 'Cotação BOB/BRL (ex: /cambio 1000)' },
+          { command: 'lucro', description: 'Simular lucro: /lucro 1000 BOB 470' },
           { command: 'saldo', description: 'Saldo da conta GOWD' },
           { command: 'pix', description: 'Enviar Pix: /pix CHAVE VALOR' },
           { command: 'status', description: 'Ver se está cadastrado' },

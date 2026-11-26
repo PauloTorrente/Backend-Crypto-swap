@@ -11,6 +11,9 @@ module.exports = (sequelize, DataTypes) =>
       key_type: { type: DataTypes.STRING, allowNull: false },
       amount: { type: DataTypes.DECIMAL(14, 2), allowNull: false },
       description: { type: DataTypes.STRING },
+      qrcode_data: { type: DataTypes.TEXT }, // Pix copia e cola (key_type = QRCODE)
+      receiver_name: { type: DataTypes.STRING },
+      receiver_city: { type: DataTypes.STRING },
       status: { type: DataTypes.STRING, allowNull: false, defaultValue: 'AWAITING' },
       gowd_id: { type: DataTypes.STRING },
       gowd_status: { type: DataTypes.STRING },

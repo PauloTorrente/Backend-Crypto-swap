@@ -2,6 +2,7 @@
 //
 // Uso:  /pix <chave> <valor> [descrição]
 //       /pix 90084148802 150,00 aluguel
+//       /pix <pix copia e cola> [valor, só se o código não tiver valor]
 //
 // Proteções:
 //   - só chats inscritos (e, se TELEGRAM_ADMIN_IDS estiver definido, só esses chats)
@@ -12,6 +13,7 @@ const { DataTypes, Op } = require('sequelize');
 const sequelize = require('../config/database');
 const fmt = require('./telegram.format');
 const gowd = require('./gowd.service');
+const brcode = require('./pix.brcode');
 
 const PixOrder = require('../api/telegram/pixorder.model')(sequelize, DataTypes);
 
@@ -59,6 +61,48 @@ function parseKey(raw) {
   return null;
 }
 
+// Pix copia e cola -> campos do pedido, ou null (já respondeu o erro)
+async function fromCopiaECola({ code, rest }, chatId, sendTo) {
+  const q = brcode.parse(code);
+  if (!q.valid) return sendTo(chatId, `❌ Pix copia e cola inválido: ${q.error}.`), null;
+  const typed = rest ? parseAmount(rest.split(/\s+/)[0]) : NaN;
+  let amount = q.amount;
+  if (amount > 0) {
+    if (typed > 0 && Math.abs(typed - amount) > 0.001) {
+      return sendTo(chatId, `❌ O código já define o valor de ${fmt.money(amount)}. Não informe outro valor.`), null;
+    }
+  } else if (typed > 0) {
+    amount = typed;
+  } else {
+    const why = q.dynamic
+      ? 'É um Pix <b>dinâmico</b>: o valor fica no sistema de quem cobra.'
+      : 'Esse código <b>não tem valor</b> definido.';
+    return sendTo(chatId, `${why}\nInforme o valor depois do código:\n<code>/pix CÓDIGO 150,00</code>`), null;
+  }
+  return {
+    pix_key: q.key || (q.url ? q.url.slice(0, 250) : 'copia e cola'),
+    key_type: 'QRCODE',
+    qrcode_data: code,
+    receiver_name: q.name,
+    receiver_city: q.city,
+    amount: Math.round(amount * 100) / 100,
+    description: (q.dynamic ? 'Pix copia e cola (dinamico)' : 'Pix copia e cola') + (q.txid ? ` ${q.txid}` : ''),
+  };
+}
+
+// db.sync() não altera tabela existente: garante as colunas novas do copia e cola
+let schemaOk = false;
+async function ensureSchema() {
+  if (schemaOk) return;
+  const qi = sequelize.getQueryInterface();
+  const table = PixOrder.getTableName();
+  const cols = await qi.describeTable(table);
+  for (const name of ['qrcode_data', 'receiver_name', 'receiver_city']) {
+    if (!cols[name]) await qi.addColumn(table, name, PixOrder.rawAttributes[name]);
+  }
+  schemaOk = true;
+}
+
 async function sentToday() {
   // meia-noite de hoje em São Paulo (UTC-3, sem horário de verão)
   const sp = new Date(Date.now() - 3 * 3600000);
@@ -70,7 +114,8 @@ async function sentToday() {
 }
 
 const USAGE =
-  '💸 <b>Enviar Pix</b>\n\n<code>/pix CHAVE VALOR [descrição]</code>\n\n' +
+  '💸 <b>Enviar Pix</b>\n\n<code>/pix CHAVE VALOR [descrição]</code>\n' +
+  'ou <code>/pix PIX_COPIA_E_COLA</code>\n\n' +
   'Exemplos:\n<code>/pix 90084148802 150,00</code>\n<code>/pix fulano@email.com 1.500,00 aluguel</code>\n' +
   '<code>/pix +5511999998888 50</code>';
 
@@ -79,13 +124,28 @@ async function handlePixCommand({ chatId, name, text, api, sendTo }) {
   if (!canSend(chatId)) return sendTo(chatId, '⛔ Você não tem permissão para enviar Pix pelo bot.');
   if (!gowd.configured()) return sendTo(chatId, '⚠️ Envio de Pix não configurado no servidor (credenciais GOWD).');
 
-  const [, rawKey, rawAmount, ...descParts] = text.split(/\s+/);
-  if (!rawKey || !rawAmount) return sendTo(chatId, USAGE);
-
-  const key = parseKey(rawKey);
-  if (!key) return sendTo(chatId, '❌ Chave Pix inválida.\n\n' + USAGE);
-  const amount = parseAmount(rawAmount);
-  if (!(amount > 0)) return sendTo(chatId, '❌ Valor inválido.\n\n' + USAGE);
+  await ensureSchema();
+  let fields;
+  const qr = brcode.extract(text);
+  if (qr) {
+    const r = await fromCopiaECola(qr, chatId, sendTo);
+    if (!r) return;
+    fields = r;
+  } else {
+    const [, rawKey, rawAmount, ...descParts] = text.split(/\s+/);
+    if (!rawKey || !rawAmount) return sendTo(chatId, USAGE);
+    const key = parseKey(rawKey);
+    if (!key) return sendTo(chatId, '❌ Chave Pix inválida.\n\n' + USAGE);
+    const value = parseAmount(rawAmount);
+    if (!(value > 0)) return sendTo(chatId, '❌ Valor inválido.\n\n' + USAGE);
+    fields = {
+      pix_key: key.key,
+      key_type: key.type,
+      amount: value,
+      description: descParts.join(' ').slice(0, 140) || 'Pix via bot',
+    };
+  }
+  const { amount } = fields;
   if (amount > MAX_VALUE) {
     return sendTo(chatId, `⛔ Valor acima do limite por Pix do bot (${fmt.money(MAX_VALUE)}). Use o painel da GOWD.`);
   }
@@ -97,15 +157,7 @@ async function handlePixCommand({ chatId, name, text, api, sendTo }) {
     );
   }
 
-  const description = descParts.join(' ').slice(0, 140) || 'Pix via bot';
-  const order = await PixOrder.create({
-    chat_id: String(chatId),
-    requested_by: name,
-    pix_key: key.key,
-    key_type: key.type,
-    amount,
-    description,
-  });
+  const order = await PixOrder.create({ chat_id: String(chatId), requested_by: name, ...fields });
 
   const res = await api('sendMessage', {
     chat_id: chatId,
@@ -162,6 +214,7 @@ async function handlePixCallback({ cb, isSubscriber, api, broadcast }) {
       code: order.id,
       key: order.pix_key,
       keyType: order.key_type,
+      qrcodeData: order.qrcode_data,
       amount: order.amount,
       description: order.description,
     });
@@ -188,8 +241,11 @@ async function handlePixCallback({ cb, isSubscriber, api, broadcast }) {
 }
 
 function friendlyError(err) {
-  const m = String(err.message || '');
-  if (/Pix key not found/i.test(m)) return 'Chave Pix não encontrada';
+  let m = String(err.message || '');
+  // a GOWD às vezes manda um JSON dentro do texto do erro: usa só o "message"
+  const inner = m.match(/"message"\s*:\s*"([^"]+)"/);
+  if (inner) m = inner[1];
+  if (/Pix key not found|Entidade não encontrada|Consulta Chave/i.test(m)) return 'Chave Pix não encontrada';
   if (/insufficient|saldo/i.test(m)) return 'Saldo insuficiente';
   if (err.status === 403 || /Cloudflare|blocked/i.test(m)) return 'GOWD bloqueou o acesso (IP não liberado?)';
   return m.replace(/^GOWD HTTP \d+: /, '').slice(0, 120);
