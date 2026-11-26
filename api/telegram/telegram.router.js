@@ -38,7 +38,7 @@ router.post('/webhooks/gowd', async (req, res) => {
   }
 
   const p = req.body || {};
-  console.log(`🏦 GOWD event=${p.event} status=${p.status}`);
+  console.log(`🏦 GOWD event=${p.event || p.type} status=${p.status}`);
   await telegram.notifyGowdEvent(p);
   res.json({ returnCode: 'SUCCESS' });
 });

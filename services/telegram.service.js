@@ -19,6 +19,7 @@ const gowd = require('./gowd.service');
 const pix = require('./telegram.pix');
 const exchange = require('../api/exchange/exchange.service');
 const cambios = require('../api/cambios/cambios.service');
+const receipt = require('./receipt.service');
 
 const Subscriber = require('../api/telegram/telegram.model')(sequelize, DataTypes);
 
@@ -72,11 +73,43 @@ async function broadcast(text) {
   }
 }
 
+// Envia uma imagem (PNG) para todos os autorizados. Nunca lança erro.
+async function broadcastPhoto(png, caption, filename = 'comprovante.png') {
+  if (!enabled()) return;
+  try {
+    for (const chatId of await recipients()) {
+      const form = new FormData();
+      form.append('chat_id', chatId);
+      form.append('caption', caption);
+      form.append('parse_mode', 'HTML');
+      form.append('photo', new Blob([png], { type: 'image/png' }), filename);
+      const res = await fetch(`${API}/sendPhoto`, { method: 'POST', body: form, signal: AbortSignal.timeout(20000) });
+      if (!res.ok) console.error(`⚠️ Telegram sendPhoto ${res.status}: ${await res.text()}`);
+    }
+  } catch (err) {
+    console.error('⚠️ Falha ao enviar comprovante pro Telegram:', err.message);
+  }
+}
+
 // ------------------------------------------------------------------ eventos
 const notifyLogin = (data) => broadcast(fmt.loginAttempt({ ...data, timestamp: new Date().toISOString() }));
 
-function notifyGowdEvent(p) {
-  if (fmt.gowdDirection(p)) return broadcast(fmt.gowdEvent(p));
+async function notifyGowdEvent(p) {
+  const dir = fmt.gowdDirection(p);
+  if (dir) {
+    await broadcast(fmt.gowdEvent(p));
+    // Pix enviado e concluído: manda também o comprovante em imagem
+    if (dir === 'out' && p.status === 'PAID') {
+      try {
+        const png = receipt.pixSentReceipt(p);
+        const e2e = p.endToEndId ? `\n🔑 <code>${fmt.escapeHtml(p.endToEndId)}</code>` : '';
+        await broadcastPhoto(png, `🧾 <b>Comprovante do Pix enviado</b>${e2e}`, `comprovante-${p.endToEndId || p.id || 'pix'}.png`);
+      } catch (err) {
+        console.error('⚠️ Erro ao gerar comprovante:', err.message);
+      }
+    }
+    return;
+  }
   console.log('ℹ️ GOWD evento não-Pix:', JSON.stringify(p).slice(0, 1000)); // payload completo fica no log
   return broadcast(fmt.gowdOther(p));
 }
