@@ -1,7 +1,7 @@
 // Bot do Telegram: notificações de login e transferências (GOWD), com acesso por senha.
 //
 // Acesso:  /start SENHA  (ou /start(SENHA))  -> passa a receber os avisos
-//          /cambio [valor]  /lucro  /saldo  /pix  /status  /stop
+//          /cambio [margem] [valor]  /lucro  /saldo  /pix  /status  /stop
 //
 // .env:
 //   TELEGRAM_BOT_TOKEN      token do @BotFather
@@ -189,9 +189,19 @@ async function handleUpdate(update) {
   }
   if (text.startsWith('/cambio')) {
     try {
-      const amount = pix.parseAmount(text.split(/\s+/)[1]);
-      const [pairs, usdt] = await Promise.all([exchange.getPairRates(), exchange.getUsdtPrices()]);
-      return reply(fmt.cambio(pairs, usdt, amount));
+      // /cambio [margem] [valor]: número < 1 é margem (0.025 ou 0,025); o resto é valor da simulação
+      let margin = null;
+      let amount = NaN;
+      for (const arg of text.split(/\s+/).slice(1)) {
+        const asNumber = Number(arg.replace(',', '.'));
+        if (asNumber > 0 && asNumber < 1) margin = asNumber;
+        else amount = pix.parseAmount(arg);
+      }
+      const [base, usdt] = await Promise.all([exchange.getPairRates(), exchange.getUsdtPrices()]);
+      const pairs = margin === null
+        ? base
+        : { ...base, margin, BOB_BRL: base.bob_per_brl + margin, BRL_BOB: base.bob_per_brl - margin };
+      return reply(fmt.cambio(pairs, usdt, amount, base.margin));
     } catch (err) {
       console.error('⚠️ /cambio:', err.message);
       return reply('❌ Não consegui buscar as cotações agora. Tente de novo em instantes.');
@@ -227,7 +237,7 @@ async function setup() {
       await api('setMyCommands', {
         commands: [
           { command: 'start', description: 'Ativar notificações (com senha)' },
-          { command: 'cambio', description: 'Cotação BOB/BRL (ex: /cambio 1000)' },
+          { command: 'cambio', description: 'Cotação BOB/BRL (ex: /cambio 0.025 1000)' },
           { command: 'lucro', description: 'Simular lucro: /lucro 1000 BOB 470' },
           { command: 'saldo', description: 'Saldo da conta GOWD' },
           { command: 'pix', description: 'Enviar Pix: /pix CHAVE VALOR' },

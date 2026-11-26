@@ -291,8 +291,9 @@ function pixResult(o, state, r = {}) {
 
 // ---------------------------------------------------------------- /cambio
 // pairs: { bob_per_brl, margin, BOB_BRL, BRL_BOB } | usdt: { BRL: {mid, sources}, BOB: {...} }
-function cambio(pairs, usdt, amount) {
+function cambio(pairs, usdt, amount, defaultMargin) {
   const n = (v, d = 4) => Number(v).toFixed(d);
+  const custom = defaultMargin !== undefined && Math.abs(pairs.margin - defaultMargin) > 1e-9;
   const list = [
     ['BOB->BRL', n(pairs.BOB_BRL)],
     ['BRL->BOB', n(pairs.BRL_BOB)],
@@ -311,14 +312,19 @@ function cambio(pairs, usdt, amount) {
   }
   const art = card(
     ['$$$   CAMBIO  BOB/BRL   $$$'],
-    [`BOB/BRL ${n(pairs.bob_per_brl)}`, `margem ${n(pairs.margin, 3)}`],
+    [
+      `BOB/BRL ${n(pairs.bob_per_brl)}`,
+      `margem ${n(pairs.margin, 3)}` + (custom ? ` (padrao ${n(defaultMargin, 3)})` : ''),
+    ],
     [...list, ['Data', fmtDate()]],
     footer
   );
   const line =
     `BOB/BRL ${n(pairs.bob_per_brl)} | BOB→BRL ${n(pairs.BOB_BRL)} | ` +
     `BRL→BOB ${n(pairs.BRL_BOB)} (margem ${n(pairs.margin, 3)})`;
-  return wrapPre('💱 <b>Câmbio BOB/BRL</b>', art, `<code>${escapeHtml(line)}</code>`);
+  const title = custom ? `💱 <b>Câmbio BOB/BRL</b> — margem ${n(pairs.margin, 3)}` : '💱 <b>Câmbio BOB/BRL</b>';
+  const note = custom ? '\n<i>Simulação com margem personalizada. A cotação do sistema continua com a margem padrão.</i>' : '';
+  return wrapPre(title, art, `<code>${escapeHtml(line)}</code>${note}`);
 }
 
 // ----------------------------------------------------------------- /lucro
